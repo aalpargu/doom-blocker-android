@@ -1,0 +1,15 @@
+<resources>
+    <style name="Theme.DoomBlocker" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#F6F5F0</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:colorAccent">#246B53</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+    <style name="Theme.DoomBlocker.IntentGate" parent="Theme.DoomBlocker">
+        <item name="android:windowBackground">#F6F5F0</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

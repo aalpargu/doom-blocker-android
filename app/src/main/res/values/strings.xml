@@ -1,0 +1,18 @@
+<resources>
+    <string name="service_name">Doom Blocker — uygulama engelleme</string>
+    <string name="tile_name">Doom Blocker’ı aç</string>
+    <string name="focus_tile_name">30 dk odak</string>
+    <string name="widget_description">Kalan süreleri ve koruma durumunu gösterir.</string>
+    <string name="widget_title">Doom Blocker</string>
+    <string name="daily_block_notice">%1$s için bugünkü süre doldu (%2$s).</string>
+    <string name="group_block_notice">%1$s ortak limiti doldu · %2$s/%3$s. Yarın tekrar kullanılabilir.</string>
+    <string name="manual_block_notice">%1$s bugünlük odak kilidiyle kapalı. Yarın tekrar kullanılabilir.</string>
+    <string name="schedule_block_notice">%1$s programı %2$s uygulamasını engelliyor. %3$s sonra tekrar kullanılabilir.</string>
+    <string name="session_block_notice">%1$s için %2$s oturum doldu · Bugün %3$s/%4$s · %5$s ara.</string>
+    <string name="cooldown_block_notice">%1$s molada. %2$s sonra tekrar deneyin.</string>
+    <string name="focus_block_notice">%1$s odak modu bitene kadar kapalı.</string>
+    <string name="intention_block_notice">%1$s için önce ne yapacağını seç.</string>
+    <string name="planned_session_end_notice">%1$s için seçtiğin kullanım süresi bitti. Mola zamanı.</string>
+    <string name="home_action_failed">Ana ekrana dönülemedi. Doom Blocker tanılamasını kontrol edin.</string>
+    <string name="accessibility_description">Seçtiğiniz uygulamanın ön plana geldiğini paket adından algılar, kullanım süresini ölçer; oturum, mola, uygulama veya ortak günlük sınır dolduğunda ya da otomatik program etkin olduğunda Ana ekrana döndürür. Yalnızca odaktaki uygulamanın paket adı okunur; ekran metni okunmaz, kaydedilmez veya gönderilmez.</string>
+</resources>

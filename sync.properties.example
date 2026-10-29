@@ -1,0 +1,4 @@
+# Copy to sync.properties. Use the project URL and public publishable key only.
+# Never put a service_role/secret key in an Android application.
+url=https://YOUR_PROJECT.supabase.co
+publishableKey=sb_publishable_REPLACE_ME
