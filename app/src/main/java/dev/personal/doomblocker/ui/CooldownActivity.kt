@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -132,89 +133,90 @@ private fun CooldownScreen(
         tween(450), label = "break-progress")
     val seconds = ((remaining + 999) / 1_000).coerceAtLeast(0)
     val countdown = String.format(Locale.getDefault(), "%02d:%02d", seconds / 60, seconds % 60)
-    val entrance = rememberPageEntrance(label)
+    var inhale by remember { mutableStateOf(true) }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 28.dp).graphicsLayer { alpha = entrance.value },
-            verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha = .10f)) {
-                Text(label, Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                    color = accent, style = MaterialTheme.typography.titleSmall)
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (!ready) "Mola bilgisi" else if (resting) "Şimdi mola zamanı" else "Mola tamamlandı",
-                    style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                Text(if (resting) "Oturum sınırına ulaştın. Biraz ara ver." else completion,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            }
-            if (resting && suggestion != null) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                ) {
-                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("BU MOLADA", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text(suggestion.title, style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text(suggestion.message, style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
+        Box(Modifier.fillMaxSize()) {
+            AuroraBackground(
+                listOf(accent.copy(alpha = .22f), MaterialTheme.colorScheme.tertiary.copy(alpha = .10f), accent.copy(alpha = .12f)),
+                Modifier.matchParentSize(),
+            )
+            Column(
+                Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Surface(shape = RoundedCornerShape(50), color = accent.copy(alpha = .12f),
+                    modifier = Modifier.staggeredEntrance(0, label)) {
+                    Text(label, Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        color = accent, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 }
-            }
-            Surface(shape = RoundedCornerShape(32.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                Column(
-                    Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(accent.copy(alpha = .08f),
-                        MaterialTheme.colorScheme.surfaceContainerLow))).padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Box(Modifier.size(120.dp), contentAlignment = Alignment.Center) {
-                        Canvas(Modifier.fillMaxSize().clearAndSetSemantics { }) {
-                            val inset = 8.dp.toPx()
-                            drawArc(accent.copy(alpha = .14f), -90f, 360f, false, Offset(inset, inset),
-                                Size(size.width - 2 * inset, size.height - 2 * inset), style = Stroke(5.dp.toPx(), cap = StrokeCap.Round))
-                            drawArc(accent, -90f, 360f * progress, false, Offset(inset, inset),
-                                Size(size.width - 2 * inset, size.height - 2 * inset), style = Stroke(5.dp.toPx(), cap = StrokeCap.Round))
-                            if (resting) {
-                                val bar = 6.dp.toPx()
-                                drawLine(accent, Offset(center.x - 9.dp.toPx(), center.y - 16.dp.toPx()),
-                                    Offset(center.x - 9.dp.toPx(), center.y + 16.dp.toPx()), bar, StrokeCap.Round)
-                                drawLine(accent, Offset(center.x + 9.dp.toPx(), center.y - 16.dp.toPx()),
-                                    Offset(center.x + 9.dp.toPx(), center.y + 16.dp.toPx()), bar, StrokeCap.Round)
-                            }
-                        }
-                        if (!resting) Text(if (ready) "✓" else "…", color = accent, fontSize = 32.sp)
-                    }
-                    if (resting) {
-                        Text(countdown, fontSize = 48.sp, fontWeight = FontWeight.Medium, color = accent)
-                        Text("kalan mola", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        endTime?.let { Text("Mola bitişi · $it", style = MaterialTheme.typography.labelLarge) }
-                    } else Text(if (ready) "Molan bitti" else "Kontrol ediliyor…", color = accent,
-                        style = MaterialTheme.typography.titleLarge)
-                    HorizontalDivider(color = accent.copy(alpha = .15f))
-                    Text(if (resting) "Ekranı kapatabilirsin; mola devam eder. Tekrar denemek molayı uzatmaz."
-                        else "Uygulama kendiliğinden açılmaz.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Column(Modifier.staggeredEntrance(1, label), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(if (!ready) "Mola bilgisi" else if (resting) "Şimdi mola zamanı" else "Mola tamamlandı",
+                        style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    Text(if (resting) "Oturum sınırına ulaştın. Gözlerini ekrandan al, birlikte nefes alalım." else completion,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 }
-            }
-            if (resting) Text("Mola bitince diğer günlük sınırların ve çalışma programın geçerli olmaya devam eder.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            warning?.let {
-                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(16.dp)) {
-                    Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onErrorContainer,
-                        style = MaterialTheme.typography.bodySmall)
+                // Breathing guide: the circle grows for 4 s (inhale) and shrinks for 4 s (exhale).
+                Box(Modifier.size(260.dp).staggeredEntrance(2, label), contentAlignment = Alignment.Center) {
+                    if (resting) BreathingCircle(accent, Modifier.fillMaxSize()) { inhale = it }
+                    Box(Modifier.size(196.dp), contentAlignment = Alignment.Center) {
+                        GlowRing(progress, accent, accent.copy(alpha = .12f), Modifier.fillMaxSize(), 8.dp)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            if (resting) {
+                                RollingText(countdown, MaterialTheme.typography.displaySmall.copy(
+                                    fontSize = 44.sp, fontWeight = FontWeight.Bold), accent)
+                                AnimatedContent(inhale, label = "breath-label") { inhaling ->
+                                    Text(if (inhaling) "nefes al…" else "nefes ver…",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.titleSmall)
+                                }
+                            } else {
+                                Text(if (ready) "✓" else "…", color = accent, fontSize = 48.sp, fontWeight = FontWeight.Bold)
+                                Text(if (ready) "Molan bitti" else "Kontrol ediliyor…", color = accent,
+                                    style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                    }
                 }
+                if (resting) endTime?.let {
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = .85f), shape = RoundedCornerShape(50)) {
+                        Text("Mola bitişi · $it", Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                if (resting && suggestion != null) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().staggeredEntrance(3, label),
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("BU MOLADA", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.5.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text(suggestion.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text(suggestion.message, style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                }
+                Text(if (resting) "Ekranı kapatabilirsin; mola devam eder. Tekrar denemek molayı uzatmaz. Mola bitince diğer sınırların geçerli olmaya devam eder."
+                    else "Uygulama kendiliğinden açılmaz.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                warning?.let {
+                    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(16.dp)) {
+                        Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                PrimaryFocusButton("Ana ekrana dön", true, onHome, Modifier.fillMaxWidth())
+                TextButton(onClick = onDetails) { Text("Koruma durumunu gör") }
             }
-            PrimaryFocusButton("Ana ekrana dön", true, onHome, Modifier.fillMaxWidth())
-            TextButton(onClick = onDetails) { Text("Koruma durumunu gör") }
         }
     }
 }

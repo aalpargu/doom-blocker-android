@@ -103,7 +103,10 @@ class LimitNotificationManager(private val context: Context) {
                 sessionKey,
                 active.packageName.hashCode() xor 0x51E55,
                 "${active.label} oturumu bitmek üzere",
-                "Oturum limitine bir dakikadan az kaldı.",
+                // The intention typed at the gate used to be stored and never shown again.
+                active.plannedReason?.takeIf { it.isNotBlank() }
+                    ?.let { "Bir dakikadan az kaldı. Amacın: “$it” — tamamladın mı?" }
+                    ?: "Oturum limitine bir dakikadan az kaldı.",
             )
         }
     }

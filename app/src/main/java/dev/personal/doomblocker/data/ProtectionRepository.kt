@@ -213,13 +213,23 @@ class ProtectionRepository(
     suspend fun updateLimits(packageName: String, limits: Limits): Result<Unit> =
         updatePolicy(packageName, AppPolicy(limits))
 
+    /**
+     * Free time must be planned ahead (1 h, or 24 h in strict mode) so it can't be used as an
+     * on-the-spot escape from a limit.
+     */
     suspend fun setTravelException(startWallMillis: Long, endWallMillis: Long): Result<Unit> =
-        mutate { snapshot, now -> UsageEngine.setTravelException(snapshot, startWallMillis, endWallMillis, now) }
-            .also { if (it.isSuccess) diagnostics.add("YOLCULUK", "Tek seferlik yolculuk istisnası ayarlandı.") }
+        mutate { snapshot, now ->
+            val lead = if (snapshot.strictModeEnabled) 24L * 60 * 60 * 1000 else 60L * 60 * 1000
+            require(startWallMillis >= now.wallMillis + lead - 60_000L) {
+                if (snapshot.strictModeEnabled) "Katı modda serbest zaman en az 24 saat önceden planlanmalı."
+                else "Serbest zaman en az 1 saat önceden planlanmalı."
+            }
+            UsageEngine.setTravelException(snapshot, startWallMillis, endWallMillis, now)
+        }.also { if (it.isSuccess) diagnostics.add("SERBEST", "Serbest zaman planlandı.") }
 
     suspend fun clearTravelException(): Result<Unit> = mutate { snapshot, now ->
         UsageEngine.clearTravelException(snapshot, now)
-    }.also { if (it.isSuccess) diagnostics.add("YOLCULUK", "Yolculuk istisnası iptal edildi.") }
+    }.also { if (it.isSuccess) diagnostics.add("SERBEST", "Serbest zaman iptal edildi.") }
 
     suspend fun setIntentionalOpen(packageName: String, enabled: Boolean): Result<Unit> = mutate { snapshot, now ->
         UsageEngine.setIntentionalOpen(snapshot, packageName, enabled, now)
@@ -354,7 +364,7 @@ class ProtectionRepository(
 
     suspend fun startFocusSession(packageNames: Set<String>, minutes: Int): Result<Unit> = mutate { snapshot, now ->
         require(isServiceConnected()) { "Koruma servisi kapalı. Odak başlatmadan önce Ayarlar'dan erişilebilirlik servisini aç." }
-        require(minutes in setOf(15, 30, 60)) { "Odak süresi 15, 30 veya 60 dakika olmalıdır." }
+        require(minutes in setOf(15, 30, 45, 60, 90)) { "Odak süresi 15, 30, 45, 60 veya 90 dakika olmalıdır." }
         UsageEngine.startFocusSession(snapshot, packageNames, minutes * timeUnitMillis, now)
     }.also {
         if (it.isSuccess) diagnostics.add("ODAK", "$minutes dakikalık odak modu başlatıldı: ${packageNames.size} uygulama.")

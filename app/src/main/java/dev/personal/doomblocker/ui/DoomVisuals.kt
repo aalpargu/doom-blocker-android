@@ -76,34 +76,77 @@ internal fun FocusOrbit(
     }
 }
 
+/**
+ * The Today hero: a living gradient card with the real remaining daily balance as a glowing ring.
+ * [remainingMillis] / [progress] come straight from the usage engine, nothing is decorative data.
+ */
 @Composable
-internal fun TimeBalanceCard(remaining: String, used: String, appCount: Int, unavailable: Int, progress: Float) {
+internal fun TimeBalanceCard(
+    remainingMillis: Long,
+    used: String,
+    appCount: Int,
+    unavailable: Int,
+    progress: Float,
+    greeting: String,
+    usingNow: String?,
+) {
     val accent = MaterialTheme.colorScheme.primary
-    val ink = lerp(accent, Color.Black, .73f)
-    val mint = lerp(accent, Color.White, .76f)
-    Surface(shape = RoundedCornerShape(DoomTokens.radiusXl), color = ink, contentColor = Color.White) {
-        Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(ink, lerp(accent, Color.Black, .60f))))) {
-            // Decorative contour lines remain behind the content and carry no semantics.
-            Canvas(Modifier.matchParentSize().clearAndSetSemantics { }) {
-                repeat(4) { i ->
-                    drawCircle(mint.copy(alpha = .05f), size.width * (.38f + i * .11f),
-                        Offset(size.width * 1.06f, size.height * 1.3f), style = Stroke(1.dp.toPx()))
-                }
-            }
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    val ink = lerp(accent, Color.Black, .78f)
+    val inkLight = lerp(accent, Color.Black, .55f)
+    val mint = lerp(accent, Color.White, .78f)
+    val ringColor = when {
+        progress <= 0f -> Color(0xFFFF8A80)
+        progress < .2f -> Color(0xFFFFC86A)
+        else -> mint
+    }
+    val totalSeconds = (remainingMillis / 1_000).coerceAtLeast(0)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val bigText = if (hours > 0) "%d:%02d".format(hours, minutes) else "%d".format(minutes)
+    val unit = if (hours > 0) "saat" else "dk"
+    Surface(shape = RoundedCornerShape(DoomTokens.radiusXl), color = ink, contentColor = Color.White, shadowElevation = 10.dp) {
+        Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(ink, inkLight)))) {
+            AuroraBackground(
+                listOf(accent.copy(alpha = .55f), Color(0xFF7FD6FF).copy(alpha = .18f), mint.copy(alpha = .22f)),
+                Modifier.matchParentSize(),
+            )
+            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(greeting, color = Color.White.copy(alpha = .82f), style = MaterialTheme.typography.titleMedium)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("BUGÜN KALAN HAKKIN", color = mint, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.8.sp)
-                        Text(remaining, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-                        Text("korunan uygulamalar için günlük toplam", color = Color.White.copy(alpha = .76f), style = MaterialTheme.typography.bodySmall)
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            RollingText(bigText, MaterialTheme.typography.displaySmall.copy(fontSize = 52.sp, lineHeight = 56.sp,
+                                fontWeight = FontWeight.Bold), Color.White)
+                            Text(" $unit", Modifier.padding(bottom = 8.dp), color = Color.White.copy(alpha = .75f),
+                                style = MaterialTheme.typography.titleMedium)
+                        }
+                        Text(if (progress <= 0f) "Bugünkü hakkın doldu. Yarın yenilenir."
+                            else "korunan uygulamalar için günlük toplam",
+                            color = Color.White.copy(alpha = .72f), style = MaterialTheme.typography.bodySmall)
                     }
-                    Spacer(Modifier.width(8.dp))
-                    FocusOrbit(Modifier.size(82.dp), progress, mint)
+                    Box(Modifier.size(112.dp), contentAlignment = Alignment.Center) {
+                        GlowRing(progress, ringColor, Color.White.copy(alpha = .12f), Modifier.fillMaxSize(), 10.dp)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("%${(progress * 100).toInt().coerceIn(0, 100)}", style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold)
+                            Text("kaldı", color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
-                HorizontalDivider(color = Color.White.copy(alpha = .13f))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("$appCount uygulama · $used kullanıldı", Modifier.weight(1f), color = Color.White.copy(alpha = .85f), style = MaterialTheme.typography.labelSmall)
-                    Text(if (unavailable == 0) "Sınırlar hazır" else "$unavailable kısıtlı", color = mint, style = MaterialTheme.typography.labelSmall)
+                usingNow?.let {
+                    Surface(color = Color.White.copy(alpha = .12f), shape = RoundedCornerShape(14.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PulsingDot(ringColor, active = true, size = 7.dp)
+                            Text(it, color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HeroStat("Uygulama", appCount.toString(), Modifier.weight(1f))
+                    HeroStat("Kullanılan", used, Modifier.weight(1f))
+                    HeroStat("Kısıtlı", unavailable.toString(), Modifier.weight(1f))
                 }
             }
         }
@@ -111,14 +154,35 @@ internal fun TimeBalanceCard(remaining: String, used: String, appCount: Int, una
 }
 
 @Composable
+private fun HeroStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(modifier, color = Color.White.copy(alpha = .09f), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(label, color = Color.White.copy(alpha = .68f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        }
+    }
+}
+
+@Composable
 internal fun PrimaryFocusButton(label: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val interactions = remember { MutableInteractionSource() }
-    val pressed by interactions.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed && enabled) .98f else 1f, spring(dampingRatio = .8f, stiffness = 600f), label = "focus-press")
-    val buttonModifier = modifier.heightIn(min = 52.dp).graphicsLayer { scaleX = scale; scaleY = scale }
-    Button(onClick, buttonModifier, enabled = enabled, interactionSource = interactions, shape = RoundedCornerShape(16.dp),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) {
-        Text(label, style = MaterialTheme.typography.titleMedium)
+    val scale = rememberPressScale(interactions, .96f)
+    val accent = MaterialTheme.colorScheme.primary
+    val gradient = Brush.horizontalGradient(listOf(accent, lerp(accent, Color(0xFF00B4D8), .35f)))
+    val buttonModifier = modifier.heightIn(min = 56.dp).graphicsLayer { scaleX = scale; scaleY = scale }
+    Button(onClick, buttonModifier, enabled = enabled, interactionSource = interactions, shape = RoundedCornerShape(18.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, disabledContainerColor = Color.Transparent),
+        contentPadding = PaddingValues(0.dp)) {
+        Box(
+            Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                .background(if (enabled) gradient else Brush.horizontalGradient(listOf(
+                    MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.surfaceContainerHigh)),
+                    RoundedCornerShape(18.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                color = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

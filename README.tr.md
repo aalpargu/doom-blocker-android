@@ -14,4 +14,4 @@ JDK 17 ve Android SDK 36 gerekir. `./gradlew :core:test`, `./gradlew :app:testPr
 
 ## Kapsam ve durum
 
-Kullanım erişimi ve erişilebilirlik izni gerekir. Arka plan kısıtları cihaz üreticisine göre değişir. Telefon/tablet ortak kotası isteğe bağlıdır; bazı kurallar cihaz bazında kalır. Kişisel 3.1.3 kaynak sürümüdür.
+Kullanım erişimi ve erişilebilirlik izni gerekir. Arka plan kısıtları cihaz üreticisine göre değişir. Telefon/tablet ortak kotası isteğe bağlıdır; bazı kurallar cihaz bazında kalır. Kişisel 3.2.0 kaynak sürümüdür; arayüz yenilemesi ve düzeltmeler için [3.2.0 notları](docs/UI_UX_3.2.0.md).

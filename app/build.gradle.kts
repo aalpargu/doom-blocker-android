@@ -13,8 +13,8 @@ android {
         applicationId = "dev.personal.doomblocker"
         minSdk = 34
         targetSdk = 36
-        versionCode = 24
-        versionName = "3.1.3"
+        versionCode = 25
+        versionName = "3.2.0"
         val syncConfig = Properties().apply {
             val configFile = rootProject.file("sync.properties")
             if (configFile.isFile) configFile.inputStream().use(::load)
@@ -76,6 +76,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")

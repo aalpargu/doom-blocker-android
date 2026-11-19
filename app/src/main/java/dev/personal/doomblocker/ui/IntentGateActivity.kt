@@ -6,6 +6,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -227,17 +240,26 @@ private fun IntentGateScreen(
         }
     }
 
+    // No entrance animation here on purpose: this screen must cover the protected app instantly.
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(Modifier.fillMaxSize()) {
+        AuroraBackground(
+            listOf(MaterialTheme.colorScheme.primary.copy(alpha = .18f), Color(0xFF7FD6FF).copy(alpha = .10f)),
+            Modifier.matchParentSize(),
+        )
         Column(
             Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState())
                 .padding(DoomTokens.space2Xl),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.Start,
         ) {
-            FocusOrbit(Modifier.fillMaxWidth().height(64.dp))
-            Text("BİR NEFES ARASI", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.padding(top = DoomTokens.spaceLg, bottom = DoomTokens.spaceSm))
-            Text("Neden açıyorum?", style = MaterialTheme.typography.headlineMedium)
+            Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primary.copy(alpha = .12f)) {
+                Text("BİR NEFES ARASI · $label", Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold)
+            }
+            Text("Neden açıyorum?", Modifier.padding(top = DoomTokens.spaceMd),
+                style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             RemainingQuotaCard(if (quotaReady) entry?.availableMillis else null)
             Text(
                 "$label için ne yapacağını belirle, süren bitince otomatik çık.",
@@ -246,7 +268,8 @@ private fun IntentGateScreen(
                 style = MaterialTheme.typography.bodyLarge,
             )
 
-            Text("Ne kadar kullanacaksın?", Modifier.padding(top = DoomTokens.space2Xl), style = MaterialTheme.typography.titleMedium)
+            Text("Ne kadar kullanacaksın?", Modifier.padding(top = DoomTokens.space2Xl), style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold)
             Text(
                 "Seçtiğin süre bu oturumun sınırı. Telefonu kilitlediğinde veya başka uygulamaya geçtiğinde sayaç durur; dönünce kaldığın yerden devam eder.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -269,50 +292,108 @@ private fun IntentGateScreen(
                 Modifier.padding(top = DoomTokens.spaceSm), color = MaterialTheme.colorScheme.primary,
             )
             if (existingUsageMillis <= 0) FlowRow(
-                Modifier.fillMaxWidth().padding(top = DoomTokens.spaceSm),
+                Modifier.fillMaxWidth().padding(top = DoomTokens.spaceMd),
                 horizontalArrangement = Arrangement.spacedBy(DoomTokens.spaceSm),
+                verticalArrangement = Arrangement.spacedBy(DoomTokens.spaceSm),
             ) {
                 choices.forEach { choice ->
-                    FilterChip(
-                        selected = selected == choice,
+                    val isSelected = selected == choice
+                    val container by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLowest,
+                        tween(200), label = "minutes-bg")
+                    val content by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                        tween(200), label = "minutes-fg")
+                    Surface(
                         onClick = { selectedMinutes = choice.requestedMinutes },
                         enabled = blocked == null && !submitting,
-                        label = { Text(choice.label) },
-                    )
+                        shape = RoundedCornerShape(16.dp), color = container,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isSelected) 0f else .6f)),
+                    ) {
+                        Text(choice.label, Modifier.padding(horizontal = 18.dp, vertical = 12.dp), color = content,
+                            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
 
-            if (existingUsageMillis <= 0) OutlinedTextField(
-                value = reason,
-                onValueChange = { reason = it.take(IntentionalAccessPolicy.maxReasonLength); error = null },
-                modifier = Modifier.fillMaxWidth().padding(top = DoomTokens.spaceLg),
-                label = { Text("Ne yapacağım?") },
-                placeholder = { Text("Örn. bir mesaja yanıt vereceğim") },
-                supportingText = { Text("Kısa ve somut bir amaç yaz.") },
-                singleLine = true,
-            )
+            if (existingUsageMillis <= 0) {
+                Text("Hızlı seç", Modifier.padding(top = DoomTokens.spaceLg), style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(
+                    Modifier.fillMaxWidth().padding(top = DoomTokens.spaceXs),
+                    horizontalArrangement = Arrangement.spacedBy(DoomTokens.spaceSm),
+                    verticalArrangement = Arrangement.spacedBy(DoomTokens.spaceXs),
+                ) {
+                    QuickReasons.forEach { quick ->
+                        FilterChip(
+                            selected = reason == quick,
+                            onClick = { reason = quick; error = null },
+                            enabled = blocked == null && !submitting,
+                            label = { Text(quick) },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = reason,
+                    onValueChange = { reason = it.take(IntentionalAccessPolicy.maxReasonLength); error = null },
+                    modifier = Modifier.fillMaxWidth().padding(top = DoomTokens.spaceSm),
+                    label = { Text("Ne yapacağım?") },
+                    placeholder = { Text("Örn. bir mesaja yanıt vereceğim") },
+                    supportingText = { Text("Amacın kartta ve süre biterken bildirimde hatırlatılır.") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                )
+            }
             error?.let {
                 Text(it, Modifier.padding(top = DoomTokens.spaceSm), color = MaterialTheme.colorScheme.error)
             }
 
-            Button(
-                onClick = {
-                    submitting = true
-                    scope.launch { onStart(selected?.requestedMinutes ?: selectedMinutes, reason.trim()) { error = it; submitting = false } }
-                },
-                enabled = !submitting && blocked == null && (existingUsageMillis > 0 ||
-                    (selected != null && IntentionalAccessPolicy.canStart(selected.requestedMinutes, reason, waitSeconds))),
-                modifier = Modifier.fillMaxWidth().padding(top = DoomTokens.space2Xl).heightIn(min = DoomTokens.controlHeight),
+            // The 5-second pause is shown as a bar that fills inside the button.
+            val waitProgress by animateFloatAsState(
+                1f - waitSeconds.toFloat() / IntentionalAccessPolicy.waitSeconds, tween(1_000, easing = LinearEasing),
+                label = "wait-fill")
+            val canStart = !submitting && blocked == null && (existingUsageMillis > 0 ||
+                (selected != null && IntentionalAccessPolicy.canStart(selected.requestedMinutes, reason, waitSeconds)))
+            Box(
+                Modifier.fillMaxWidth().padding(top = DoomTokens.space2Xl).heightIn(min = 58.dp).clip(RoundedCornerShape(18.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             ) {
-                Text(if (submitting) "Açılıyor…" else if (existingUsageMillis > 0) "Kalan hakkımla devam et"
-                    else if (waitSeconds > 0) "$waitSeconds sn düşün" else "${entryDuration(selected?.usageMillis ?: 0)} kullanım için aç")
+                Box(Modifier.matchParentSize()) {
+                    Box(Modifier.fillMaxWidth(if (existingUsageMillis > 0) 1f else waitProgress).fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = if (canStart) 1f else .28f)))
+                }
+                Button(
+                    onClick = {
+                        submitting = true
+                        scope.launch { onStart(selected?.requestedMinutes ?: selectedMinutes, reason.trim()) { error = it; submitting = false } }
+                    },
+                    enabled = canStart,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .7f)),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 58.dp),
+                ) {
+                    Text(if (submitting) "Açılıyor…" else if (existingUsageMillis > 0) "Kalan hakkımla devam et"
+                        else if (waitSeconds > 0) "$waitSeconds sn düşün…" else if (reason.isBlank()) "Önce amacını yaz"
+                        else "${entryDuration(selected?.usageMillis ?: 0)} kullanım için aç",
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
             }
-            TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                Text("Şimdi açma")
+            TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = DoomTokens.spaceSm)) {
+                Text("Vazgeç, şimdi açma 💪", style = MaterialTheme.typography.titleSmall)
             }
+        }
         }
     }
 }
+
+private val QuickReasons = listOf(
+    "Mesaja cevap vereceğim",
+    "Bir şey arayacağım",
+    "İş / ders için",
+    "Bildirime bakacağım",
+)
 
 @Composable
 private fun RemainingQuotaCard(availableMillis: Long?) {
@@ -324,11 +405,16 @@ private fun RemainingQuotaCard(availableMillis: Long?) {
         else -> colors.primary to colors.onPrimary
     }
     Surface(
-        color = background, contentColor = foreground, shape = MaterialTheme.shapes.large,
+        color = background, contentColor = foreground, shape = RoundedCornerShape(28.dp), shadowElevation = 6.dp,
         modifier = Modifier.fillMaxWidth().padding(top = DoomTokens.spaceLg, bottom = DoomTokens.spaceSm),
     ) {
-        Column(Modifier.padding(DoomTokens.spaceXl), verticalArrangement = Arrangement.spacedBy(DoomTokens.spaceXs)) {
-            Text("BUGÜNKÜ KALAN HAKKIN", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Column(
+            Modifier.background(Brush.linearGradient(listOf(background, androidx.compose.ui.graphics.lerp(background, Color.Black, .25f))))
+                .padding(DoomTokens.spaceXl),
+            verticalArrangement = Arrangement.spacedBy(DoomTokens.spaceXs),
+        ) {
+            Text("BUGÜNKÜ KALAN HAKKIN", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
+                letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp))
             Text(availableMillis?.let(::entryDuration) ?: "Hesaplanıyor…",
                 style = if (availableMillis == null) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.displayMedium,
                 fontWeight = FontWeight.ExtraBold)

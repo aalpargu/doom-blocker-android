@@ -12,11 +12,41 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.DateRange
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -45,6 +75,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -183,18 +214,24 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class HomeSection(val label: String) {
-    TODAY("Bugün"), PLANS("Planlar"), SETTINGS("Ayarlar")
+private enum class HomeSection(val label: String, val icon: ImageVector) {
+    TODAY("Bugün", Icons.Rounded.Home), PLANS("Planlar", Icons.Rounded.DateRange), SETTINGS("Ayarlar", Icons.Rounded.Settings)
 }
 
+// "Engellenen" used to sort exactly like "Akıllı" (both ranked by block state), so it was removed.
 private enum class TargetSort(val label: String) {
-    SMART("Akıllı"), LEAST_REMAINING("En az kalan"), MOST_USED("En çok kullanılan"), BLOCKED("Engellenen")
+    SMART("Akıllı"), LEAST_REMAINING("En az kalan"), MOST_USED("En çok kullanılan")
 }
 
 private const val MAX_BACKUP_BYTES = 1_048_576
-private val tripZone = ZoneId.of("Europe/Istanbul")
-private val tripStartWallMillis = LocalDate.of(2026, 9, 26).atTime(22, 0).atZone(tripZone).toInstant().toEpochMilli()
-private val tripEndWallMillis = LocalDate.of(2026, 9, 28).atStartOfDay(tripZone).toInstant().toEpochMilli()
+
+/** Greeting that follows the local time of day. */
+private fun greetingFor(hour: Int): String = when (hour) {
+    in 5..11 -> "Günaydın ☀️"
+    in 12..17 -> "İyi günler 🌿"
+    in 18..22 -> "İyi akşamlar 🌙"
+    else -> "Geç oldu, telefonu bırakma vakti 🌌"
+}
 
 private data class PolicyEditorTarget(val installed: InstalledApp?, val protected: ProtectedApp?)
 
@@ -243,6 +280,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
     var showHistory by rememberSaveable { mutableStateOf(false) }
     var showAdvancedPlans by rememberSaveable { mutableStateOf(false) }
     var confirmTravelCancel by rememberSaveable { mutableStateOf(false) }
+    var showFreeTimeEditor by rememberSaveable { mutableStateOf(false) }
     var targetSort by rememberSaveable { mutableStateOf(TargetSort.SMART) }
     val selectedSectionIndex by uiModel.selectedSectionIndex.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<String?>(null) }
@@ -466,12 +504,11 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
     val todayListState = rememberLazyListState()
     val plansListState = rememberLazyListState()
     val settingsListState = rememberLazyListState()
-    val listState = when (selectedSection) {
+    fun listStateFor(section: HomeSection) = when (section) {
         HomeSection.TODAY -> todayListState
         HomeSection.PLANS -> plansListState
         HomeSection.SETTINGS -> settingsListState
     }
-    val pageEntrance = rememberPageEntrance(selectedSection to showDiagnostics)
     val setupComplete = readyForProtection && runtime.connected && snapshot?.apps?.isNotEmpty() == true
     val installedByPackage = installed.associateBy { it.packageName }
     val resolvedEditorTarget = editorTarget ?: editorPackageKey?.let { packageName ->
@@ -489,7 +526,17 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(snackbarHostState) { data ->
+                androidx.compose.material3.Snackbar(
+                    data,
+                    shape = RoundedCornerShape(18.dp),
+                    containerColor = MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
+        },
         bottomBar = {
             DoomNavigationBar(selectedSection) { section ->
                 showDiagnostics = false
@@ -497,25 +544,36 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
             }
         },
     ) { insets ->
-        Box(Modifier.fillMaxSize().padding(insets)) {
+        AnimatedContent(
+            targetState = selectedSection to showDiagnostics,
+            modifier = Modifier.fillMaxSize().padding(insets),
+            transitionSpec = {
+                val forward = targetState.first.ordinal > initialState.first.ordinal ||
+                    (targetState.first == initialState.first && targetState.second)
+                (slideInHorizontally(spring(dampingRatio = .9f, stiffness = Spring.StiffnessMediumLow)) { if (forward) it / 4 else -it / 4 } +
+                    fadeIn(tween(260, delayMillis = 40))) togetherWith
+                    (slideOutHorizontally(tween(220)) { if (forward) -it / 6 else it / 6 } + fadeOut(tween(160)))
+            },
+            label = "section",
+        ) { (section, diagnosticsOpen) ->
+        Box(Modifier.fillMaxSize()) {
             LazyColumn(
-                state = listState,
+                state = listStateFor(section),
                 modifier = Modifier.align(Alignment.TopCenter).widthIn(max = DoomTokens.maxContentWidth)
-                    .fillMaxHeight().fillMaxWidth().graphicsLayer {
-                        alpha = pageEntrance.value
-                        translationY = (1f - pageEntrance.value) * 12.dp.toPx()
-                    },
+                    .fillMaxHeight().fillMaxWidth(),
                 contentPadding = PaddingValues(
-                    horizontal = DoomTokens.spaceXl,
-                    vertical = if (selectedSection == HomeSection.TODAY) DoomTokens.spaceLg else DoomTokens.space2Xl,
+                    start = DoomTokens.spaceXl,
+                    end = DoomTokens.spaceXl,
+                    top = if (section == HomeSection.TODAY) DoomTokens.spaceLg else DoomTokens.space2Xl,
+                    bottom = 32.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(
-                    if (selectedSection == HomeSection.TODAY) DoomTokens.spaceMd else DoomTokens.spaceLg,
+                    if (section == HomeSection.TODAY) 14.dp else DoomTokens.spaceLg,
                 ),
             ) {
                 item {
                     AppHeader(
-                        section = selectedSection,
+                        section = section,
                         labMode = labMode,
                         strictMode = snapshot?.strictModeEnabled == true,
                         setupComplete = setupComplete,
@@ -563,44 +621,41 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                     )
                 }
 
-                when (selectedSection) {
+                when (section) {
                     HomeSection.TODAY -> {
                         if (!setupComplete) item {
-                            SetupCard(
-                                permissions = permissions,
-                                serviceConnected = runtime.connected,
-                                hasTarget = snapshot?.apps?.isNotEmpty() == true,
-                                lastEvaluationWall = runtime.lastEvaluationWallMillis,
-                                nowWall = now.wallMillis,
-                                app = app,
-                            )
+                            Box(Modifier.staggeredEntrance(0, section)) {
+                                SetupCard(
+                                    permissions = permissions,
+                                    serviceConnected = runtime.connected,
+                                    hasTarget = snapshot?.apps?.isNotEmpty() == true,
+                                    lastEvaluationWall = runtime.lastEvaluationWallMillis,
+                                    nowWall = now.wallMillis,
+                                    app = app,
+                                )
+                            }
                         }
 
                         if (!protection.ready && protection.error == null) {
                             item { LoadingCard() }
                         } else if (snapshot != null) {
-                            if (snapshot.travelException?.isActive(now.wallMillis) == true) item {
-                                NoticeCard(
-                                    "Yolculuk istisnası açık · Tüm korunan uygulamalar 27 Eylül sonuna kadar kullanılabilir.",
-                                    NoticeTone.Info,
-                                    actionLabel = "Planı gör",
-                                ) { uiModel.selectSection(HomeSection.PLANS.ordinal) }
-                            }
-                            if (snapshot.apps.isNotEmpty()) item {
-                                TodaySummaryCard(snapshot, now)
-                            }
-                            if (cloud.linked) item {
-                                NoticeCard("Aşağıdaki istatistikler bu cihaza aittir. Telefon ve tablet toplamını Cihazlarım ekranından görebilirsin.", NoticeTone.Info)
-                            }
-                            item {
-                                SettingsActionRow("Cihazlarım · ortak günlük kota",
-                                    "Telefon ve tabletteki toplam kullanımı gör.") {
-                                    context.startActivity(Intent(context, DeviceSyncActivity::class.java))
+                            snapshot.travelException?.takeIf { it.isActive(now.wallMillis) }?.let { pause ->
+                                item {
+                                    NoticeCard(
+                                        "Serbest zaman açık · ${formatDateTime(pause.endWallMillis, snapshot.quotaZoneId)} saatine kadar sınırlar uygulanmıyor.",
+                                        NoticeTone.Info,
+                                        actionLabel = "Planı gör",
+                                    ) { uiModel.selectSection(HomeSection.PLANS.ordinal) }
                                 }
                             }
                             if (snapshot.apps.isNotEmpty()) item {
+                                Box(Modifier.staggeredEntrance(1, section)) { TodaySummaryCard(snapshot, now) }
+                            }
+                            if (snapshot.apps.isNotEmpty()) item {
+                                Box(Modifier.staggeredEntrance(2, section)) {
                                 FocusModeCard(
                                     activeRemainingMillis = snapshot.focusSession?.block?.remainingMillis(now) ?: 0,
+                                    activeTotalMillis = snapshot.focusSession?.block?.durationMillis ?: 0,
                                     activeLabels = snapshot.apps.filter { it.packageName in snapshot.focusSession?.packageNames.orEmpty() }.map { it.label },
                                     enabled = readyForProtection && runtime.connected,
                                     onStartAll = { minutes ->
@@ -616,13 +671,36 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                     },
                                     onChooseApps = { showFocusSession = true },
                                 )
+                                }
                             }
                             item {
-                                SectionHeading(
-                                    title = "Korunan uygulamalar",
-                                    supporting = if (orderedTargets.isEmpty()) "İlk uygulamanı ekleyerek odak planını oluştur."
-                                    else null,
-                                )
+                                Row(Modifier.fillMaxWidth().staggeredEntrance(3, section),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    QuickTile(
+                                        title = "Kullanım geçmişi",
+                                        subtitle = "Grafikler ve eğilimler",
+                                        icon = Icons.Rounded.DateRange,
+                                        modifier = Modifier.weight(1f),
+                                    ) { showHistory = true }
+                                    QuickTile(
+                                        title = "Cihazlarım",
+                                        subtitle = if (cloud.linked) "Ortak kota bağlı" else "Telefon + tablet",
+                                        icon = Icons.Rounded.Star,
+                                        modifier = Modifier.weight(1f),
+                                    ) { context.startActivity(Intent(context, DeviceSyncActivity::class.java)) }
+                                }
+                            }
+                            if (cloud.linked) item {
+                                NoticeCard("Kartlardaki istatistikler bu cihaza aittir. Telefon ve tablet toplamı kartların üstündeki “Ortak” satırında görünür.", NoticeTone.Info)
+                            }
+                            item {
+                                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    SectionHeading(
+                                        title = "Korunan uygulamalar",
+                                        supporting = if (orderedTargets.isEmpty()) "İlk uygulamanı ekleyerek odak planını oluştur."
+                                        else "${orderedTargets.size} uygulama · dokununca ayrıntılar açılır",
+                                    )
+                                }
                             }
                             if (orderedTargets.size > 1) item {
                                 TargetSortMenu(selected = targetSort, onSelect = { targetSort = it })
@@ -630,19 +708,19 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                             if (orderedTargets.isEmpty()) {
                                 item { EmptyCard(readyForProtection) { showPicker = true } }
                             } else {
-                                items(orderedTargets, key = { it.packageName }) { target ->
-                                    if (cloud.linked) {
+                                itemsIndexed(orderedTargets, key = { _, it -> it.packageName }) { index, target ->
+                                    val sharedLine = if (cloud.linked) {
                                         val shared = cloud.apps.firstOrNull { it.packageName == target.packageName }
                                         val fresh = dev.personal.doomblocker.sync.SharedQuota.fresh(cloud, snapshot, now)
                                         val status = dev.personal.doomblocker.sync.SharedQuota.blockMessage(cloud, snapshot, target.packageName, now)
-                                        Text(if (fresh && shared != null) status ?: "${target.label} · Ortak kalan: ${
+                                        if (fresh && shared != null) status ?: "Ortak kalan (telefon + tablet): ${
                                             (dev.personal.doomblocker.sync.SharedQuota.remaining(shared,
                                                 UsageEngine.view(snapshot, target, now).usedTodayMillis) / 1000).let { "${it / 60} dk ${it % 60} sn" }}"
-                                            else "${target.label} · Ortak kota güncelleniyor…",
-                                            style = MaterialTheme.typography.labelLarge)
-                                    }
+                                        else "Ortak kota güncelleniyor…"
+                                    } else null
                                     TargetCard(
-                                        modifier = Modifier.animateItem(),
+                                        modifier = Modifier.animateItem().staggeredEntrance(4 + index, section),
+                                        sharedLine = sharedLine,
                                         target = target,
                                         installed = installedByPackage[target.packageName],
                                         view = UsageEngine.view(snapshot, target, now),
@@ -677,39 +755,18 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                     )
                                 }
                             }
-
-                            item {
-                                SettingsActionRow("Kullanım geçmişi", "Günlük ayrıntılar ve haftalık eğilimler") { showHistory = true }
-                            }
                         }
                     }
 
                     HomeSection.PLANS -> {
                         if (!protection.ready && protection.error == null) item { LoadingCard() }
                         else if (snapshot != null) {
-                            if (now.wallMillis < tripEndWallMillis) item {
-                                PlanSection(
-                                    title = "Yolculuk istisnası",
-                                    supporting = "26 Eylül 22.00 – 27 Eylül 23.59 · Türkiye saati",
-                                ) {
-                                    TravelExceptionPanel(
-                                        exception = snapshot.travelException,
-                                        nowWallMillis = now.wallMillis,
-                                        onSchedule = {
-                                            scope.launch {
-                                                app.repository.setTravelException(tripStartWallMillis, tripEndWallMillis)
-                                                    .onSuccess { message = "Yolculuk istisnası planlandı." }
-                                                    .onFailure { message = it.message ?: "Yolculuk istisnası planlanamadı." }
-                                            }
-                                        },
-                                        onCancel = { confirmTravelCancel = true },
-                                    )
-                                }
-                            }
                             item {
+                                Box(Modifier.staggeredEntrance(0, section)) {
                                 PlanSection(
                                     title = "Çalışma saatlerim",
                                     supporting = "Seçili uygulamaları belirli saatlerde otomatik kısıtla.",
+                                    icon = Icons.Rounded.DateRange,
                                 ) {
                                     SchedulesPanel(
                                         snapshot = snapshot,
@@ -725,11 +782,14 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                         },
                                     )
                                 }
+                                }
                             }
                             item {
+                                Box(Modifier.staggeredEntrance(1, section)) {
                                 PlanSection(
                                     title = "Sosyal medya için günlük toplam süre",
                                     supporting = "Birden fazla uygulama aynı günlük süreyi paylaşsın.",
+                                    icon = Icons.Rounded.Lock,
                                 ) {
                                     GroupsPanel(
                                         snapshot = snapshot,
@@ -744,6 +804,25 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                             }
                                         },
                                     )
+                                }
+                                }
+                            }
+                            item {
+                                Box(Modifier.staggeredEntrance(2, section)) {
+                                PlanSection(
+                                    title = "Serbest zaman",
+                                    supporting = "Yolculuk, tatil veya özel bir gün için sınırları önceden planlayarak duraklat.",
+                                    icon = Icons.Rounded.Star,
+                                ) {
+                                    FreeTimePanel(
+                                        exception = snapshot.travelException,
+                                        nowWallMillis = now.wallMillis,
+                                        zoneId = snapshot.quotaZoneId,
+                                        strictMode = snapshot.strictModeEnabled,
+                                        onPlan = { showFreeTimeEditor = true },
+                                        onCancel = { confirmTravelCancel = true },
+                                    )
+                                }
                                 }
                             }
                             item {
@@ -790,7 +869,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                     }
 
                     HomeSection.SETTINGS -> {
-                        if (showDiagnostics) {
+                        if (diagnosticsOpen) {
                             if (!protection.ready && protection.error == null) item { LoadingCard() }
                             else if (snapshot != null) {
                                 item {
@@ -951,7 +1030,10 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                     SettingsGroup("Uygulama") {
                                         SettingsInfoRow(
                                             title = "Doom Blocker",
-                                            description = "Sürüm $appVersion · Veriler yalnızca bu cihazda tutulur.",
+                                            // The old text claimed "data stays on this device" even with cloud sync on.
+                                            description = "Sürüm $appVersion · " + if (cloud.linked)
+                                                "Kurallar bu cihazda; kullanım süreleri ortak kota için hesabına eşitlenir."
+                                            else "Veriler yalnızca bu cihazda tutulur.",
                                         )
                                         SubtleDivider()
                                         SettingsActionRow(
@@ -966,8 +1048,27 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                 }
             }
         }
+        }
     }
 
+    if (showFreeTimeEditor && snapshot != null) {
+        FreeTimeDialog(
+            nowWallMillis = now.wallMillis,
+            zoneId = snapshot.quotaZoneId,
+            strictMode = snapshot.strictModeEnabled,
+            onDismiss = { showFreeTimeEditor = false },
+            onSave = { start, end ->
+                scope.launch {
+                    app.repository.setTravelException(start, end)
+                        .onSuccess {
+                            showFreeTimeEditor = false
+                            message = "Serbest zaman planlandı: ${formatDateTime(start, snapshot.quotaZoneId)} – ${formatDateTime(end, snapshot.quotaZoneId)}"
+                        }
+                        .onFailure { message = it.message ?: "Serbest zaman planlanamadı." }
+                }
+            },
+        )
+    }
     if (showHistory && snapshot != null) {
         val historySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(onDismissRequest = { showHistory = false }, sheetState = historySheetState) {
@@ -982,15 +1083,15 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
     if (confirmTravelCancel) {
         AlertDialog(
             onDismissRequest = { confirmTravelCancel = false },
-            title = { Text("Yolculuk istisnası iptal edilsin mi?") },
+            title = { Text("Serbest zaman iptal edilsin mi?") },
             text = { Text("İptal edince korunan uygulamalarda normal sınırlar hemen yeniden uygulanır.") },
             confirmButton = {
                 Button(onClick = {
                     confirmTravelCancel = false
                     scope.launch {
                         app.repository.clearTravelException()
-                            .onSuccess { message = "Yolculuk istisnası iptal edildi." }
-                            .onFailure { message = it.message ?: "Yolculuk istisnası iptal edilemedi." }
+                            .onSuccess { message = "Serbest zaman iptal edildi." }
+                            .onFailure { message = it.message ?: "Serbest zaman iptal edilemedi." }
                     }
                 }) { Text("İptal et") }
             },
@@ -1409,62 +1510,131 @@ private fun AppHeader(
         HomeSection.PLANS -> "Çalışma saatlerin ve günlük sınırların."
         HomeSection.SETTINGS -> "Görünüm, koruma ve kişisel tercihlerin."
     }
-    Column(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (diagnosticsOpen) TextButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 0.dp)) {
             Text("‹ Ayarlara dön")
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (labMode) "DOOM / LAB" else "DOOM / BLOCKER", Modifier.weight(1f),
-                style = MaterialTheme.typography.labelSmall, letterSpacing = 1.6.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            BrandMark()
+            Text(if (labMode) "Doom Blocker Lab" else "Doom Blocker", Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface)
             if (!diagnosticsOpen) {
-                val color = if (setupComplete && !protectionProblem) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
-                Surface(color = color.copy(alpha = .09f), shape = CircleShape) {
-                    Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Box(Modifier.size(6.dp).background(color, CircleShape))
-                        Text(when { protectionProblem -> "Kontrol gerekli"; !setupComplete -> "Kurulum gerekli"; strictMode -> "Katı mod açık"; else -> "Koruma aktif" },
-                            style = MaterialTheme.typography.labelSmall, color = color)
+                val healthy = setupComplete && !protectionProblem
+                val color by animateColorAsState(
+                    if (healthy) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary, tween(400),
+                    label = "header-status")
+                Surface(color = color.copy(alpha = .12f), shape = CircleShape) {
+                    Row(Modifier.padding(start = 4.dp, end = 12.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        PulsingDot(color, active = healthy, size = 7.dp)
+                        AnimatedContent(
+                            when { protectionProblem -> "Kontrol gerekli"; !setupComplete -> "Kurulum gerekli"; strictMode -> "Katı mod açık"; else -> "Koruma aktif" },
+                            label = "header-status-text",
+                        ) { Text(it, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = color) }
                     }
                 }
             }
         }
-        Text(title, style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(6.dp))
+        Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text(supporting, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
+/** Small gradient shield with a pause mark: the app's identity at the top of every page. */
+@Composable
+private fun BrandMark() {
+    val accent = MaterialTheme.colorScheme.primary
+    Box(
+        Modifier.size(34.dp).clip(RoundedCornerShape(11.dp))
+            .background(Brush.linearGradient(listOf(accent, lerp(accent, Color(0xFF00B4D8), .45f)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(16.dp)) {
+            val w = size.width * .22f
+            drawRoundRect(Color.White, topLeft = androidx.compose.ui.geometry.Offset(size.width * .18f, 0f),
+                size = androidx.compose.ui.geometry.Size(w, size.height),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(w / 2, w / 2))
+            drawRoundRect(Color.White, topLeft = androidx.compose.ui.geometry.Offset(size.width * .6f, 0f),
+                size = androidx.compose.ui.geometry.Size(w, size.height),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(w / 2, w / 2))
+        }
+    }
+}
+
+/** Floating pill navigation with a sliding, springy selection indicator. */
 @Composable
 private fun DoomNavigationBar(selected: HomeSection, onSelect: (HomeSection) -> Unit) {
-    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 18.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 18.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
         Surface(
             modifier = Modifier.widthIn(max = DoomTokens.maxContentWidth).fillMaxWidth(),
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(30.dp),
             color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            shadowElevation = 8.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .45f)),
+            shadowElevation = 14.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f)),
         ) {
-            Row(Modifier.padding(6.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                HomeSection.entries.forEach { section ->
-                    val isSelected = section == selected
-                    val background by animateColorAsState(
-                        if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,
-                        tween(240), label = "nav-background")
-                    val foreground by animateColorAsState(
-                        if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                        tween(240), label = "nav-foreground")
-                    val scale by animateFloatAsState(if (isSelected) 1.08f else 1f, tween(220), label = "nav-glyph")
-                    Column(
-                        Modifier.weight(1f).heightIn(min = 58.dp).clip(RoundedCornerShape(20.dp)).background(background)
-                            .selectable(selected = isSelected, onClick = { if (!isSelected) onSelect(section) }, role = Role.Tab)
-                            .padding(vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
-                    ) {
-                        Box(Modifier.graphicsLayer { scaleX = scale; scaleY = scale }) { NavGlyph(section, foreground) }
-                        Text(section.label, color = foreground, style = MaterialTheme.typography.labelSmall)
+            BoxWithConstraints(Modifier.padding(6.dp)) {
+                val count = HomeSection.entries.size
+                val slot = maxWidth / count
+                val indicatorOffset by animateDpAsState(
+                    slot * selected.ordinal,
+                    spring(dampingRatio = .72f, stiffness = Spring.StiffnessMediumLow),
+                    label = "nav-indicator",
+                )
+                val accent = MaterialTheme.colorScheme.primary
+                Box(
+                    Modifier.offset(x = indicatorOffset).width(slot).height(60.dp).clip(RoundedCornerShape(24.dp))
+                        .background(Brush.linearGradient(listOf(accent, lerp(accent, Color(0xFF00B4D8), .35f)))),
+                )
+                Row(Modifier.fillMaxWidth().selectableGroup()) {
+                    HomeSection.entries.forEach { section ->
+                        val isSelected = section == selected
+                        val foreground by animateColorAsState(
+                            if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tween(260), label = "nav-foreground")
+                        val scale by animateFloatAsState(if (isSelected) 1.12f else 1f,
+                            spring(dampingRatio = .45f, stiffness = Spring.StiffnessMedium), label = "nav-glyph")
+                        Column(
+                            Modifier.weight(1f).height(60.dp).clip(RoundedCornerShape(24.dp))
+                                .selectable(selected = isSelected, onClick = { if (!isSelected) onSelect(section) }, role = Role.Tab),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+                        ) {
+                            Icon(section.icon, contentDescription = null, tint = foreground,
+                                modifier = Modifier.size(24.dp).graphicsLayer { scaleX = scale; scaleY = scale })
+                            Text(section.label, color = foreground, style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium)
+                        }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Compact square shortcut with an icon bubble. */
+@Composable
+private fun QuickTile(title: String, subtitle: String, icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val interactions = remember { MutableInteractionSource() }
+    val scale = rememberPressScale(interactions)
+    Surface(
+        onClick = onClick,
+        interactionSource = interactions,
+        modifier = modifier.graphicsLayer { scaleX = scale; scaleY = scale },
+        shape = RoundedCornerShape(DoomTokens.radiusLg),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f)),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(20.dp))
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -1533,17 +1703,19 @@ private fun SectionHeading(title: String, supporting: String? = null) {
 private fun PlanSection(
     title: String,
     supporting: String,
+    icon: ImageVector = Icons.Rounded.DateRange,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     SectionSurface {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                    NavGlyph(HomeSection.PLANS, MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, style = MaterialTheme.typography.titleLarge)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            val accent = MaterialTheme.colorScheme.primary
+            Box(
+                Modifier.size(46.dp).clip(RoundedCornerShape(15.dp))
+                    .background(Brush.linearGradient(listOf(accent.copy(alpha = .18f), accent.copy(alpha = .06f)))),
+                contentAlignment = Alignment.Center,
+            ) { Icon(icon, null, tint = accent, modifier = Modifier.size(24.dp)) }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(supporting, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -1552,32 +1724,132 @@ private fun PlanSection(
     }
 }
 
+/**
+ * Replaces the hard-coded 26–27 September bus-trip exception (which expired and could never be
+ * used again) with a reusable, *pre-planned* pause. It must start in the future so it can't be
+ * used as an instant escape hatch.
+ */
 @Composable
-private fun TravelExceptionPanel(
+private fun FreeTimePanel(
     exception: TravelException?,
     nowWallMillis: Long,
-    onSchedule: () -> Unit,
+    zoneId: String,
+    strictMode: Boolean,
+    onPlan: () -> Unit,
     onCancel: () -> Unit,
 ) {
-    val active = exception?.isActive(nowWallMillis) == true
-    Text(
-        when {
-            active -> "Şu anda açık · Tüm korunan uygulamalar 27 Eylül sonuna kadar kullanılabilir."
-            exception != null -> "Planlandı · Saat 22.00'de tüm korunan uygulamalarda başlayacak."
-            else -> "İptal edildi · İstersen bitiş saatinden önce yeniden planlayabilirsin."
+    val current = exception?.takeIf { it.endWallMillis > nowWallMillis }
+    val active = current?.isActive(nowWallMillis) == true
+    AnimatedContent(current to active, label = "free-time") { (pause, isActive) ->
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (pause == null) {
+                Text("Planlı serbest zaman yok.", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (strictMode) "Katı mod açık: serbest zaman en erken 24 saat sonrası için planlanabilir."
+                    else "Anlık kaçamak olmasın diye en erken 1 saat sonrası için planlanabilir. En fazla 7 gün sürer.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = onPlan, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(16.dp)) {
+                    Icon(Icons.Rounded.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Serbest zaman planla")
+                }
+            } else {
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(16.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        PulsingDot(MaterialTheme.colorScheme.primary, active = isActive)
+                        Column(Modifier.weight(1f)) {
+                            Text(if (isActive) "Şu anda açık" else "Planlandı",
+                                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Text("${formatDateTime(pause.startWallMillis, zoneId)} → ${formatDateTime(pause.endWallMillis, zoneId)}",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                }
+                Text("Kullanım kaydedilmeye devam eder; bitince normal kurallar kendiliğinden geri gelir.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = onCancel) { Text("İptal et", color = MaterialTheme.colorScheme.error) }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun FreeTimeDialog(
+    nowWallMillis: Long,
+    zoneId: String,
+    strictMode: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (Long, Long) -> Unit,
+) {
+    val zone = ZoneId.of(zoneId)
+    val leadMillis = if (strictMode) 24L * 60 * 60 * 1000 else 60L * 60 * 1000
+    val earliest = nowWallMillis + leadMillis
+    // Default: tomorrow 09:00 (or later if the lead time requires it), for 12 hours.
+    val defaultStart = maxOf(
+        LocalDate.ofInstant(Instant.ofEpochMilli(nowWallMillis), zone).plusDays(1).atTime(9, 0).atZone(zone).toInstant().toEpochMilli(),
+        earliest,
+    )
+    var startDayOffset by rememberSaveable { mutableIntStateOf(0) }
+    var startMinute by rememberSaveable {
+        mutableIntStateOf(Instant.ofEpochMilli(defaultStart).atZone(zone).let { it.hour * 60 + it.minute })
+    }
+    var durationHours by rememberSaveable { mutableIntStateOf(12) }
+    var editingTime by rememberSaveable { mutableStateOf(false) }
+    val baseDay = LocalDate.ofInstant(Instant.ofEpochMilli(defaultStart), zone)
+    val start = baseDay.plusDays(startDayOffset.toLong()).atStartOfDay(zone).toInstant().toEpochMilli() + startMinute * 60_000L
+    val end = start + durationHours * 60L * 60 * 1000
+    val valid = start >= earliest && durationHours in 1..(7 * 24)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Serbest zaman planla") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Bu aralıkta korunan uygulamalarda sınırlar uygulanmaz.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Başlangıç günü", style = MaterialTheme.typography.labelLarge)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (0..3).forEach { offset ->
+                        FilterChip(
+                            selected = startDayOffset == offset,
+                            onClick = { startDayOffset = offset },
+                            label = { Text(baseDay.plusDays(offset.toLong())
+                                .format(DateTimeFormatter.ofPattern("d MMM", Locale.forLanguageTag("tr")))) },
+                        )
+                    }
+                }
+                OutlinedButton(onClick = { editingTime = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Başlangıç saati · ${formatMinute(startMinute)}")
+                }
+                Text("Süre", style = MaterialTheme.typography.labelLarge)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(3, 6, 12, 24, 48).forEach { hours ->
+                        FilterChip(selected = durationHours == hours, onClick = { durationHours = hours },
+                            label = { Text(if (hours < 24) "$hours sa" else "${hours / 24} gün") })
+                    }
+                }
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(14.dp)) {
+                    Text("${formatDateTime(start, zoneId)} → ${formatDateTime(end, zoneId)}",
+                        Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold)
+                }
+                if (!valid) Text(
+                    if (strictMode) "Katı modda başlangıç en az 24 saat sonra olmalı." else "Başlangıç en az 1 saat sonra olmalı.",
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
         },
-        style = MaterialTheme.typography.bodyMedium,
-        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        confirmButton = { Button(onClick = { onSave(start, end) }, enabled = valid) { Text("Planla") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Vazgeç") } },
     )
-    Text(
-        "Kullanım süresi kaydedilmeye devam eder. Günlük kota gece yarısında yenilenir; istisna 28 Eylül 00.00'da biter ve normal kurallar geri gelir.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    if (exception == null) {
-        Button(onClick = onSchedule) { Text("Yeniden planla") }
-    } else {
-        TextButton(onClick = onCancel) { Text("İstisnayı iptal et") }
+    if (editingTime) {
+        ClockTimePickerDialog(
+            title = "Başlangıç saati",
+            initialMinute = startMinute,
+            onDismiss = { editingTime = false },
+            onConfirm = { startMinute = it; editingTime = false },
+        )
     }
 }
 
@@ -1585,15 +1857,19 @@ private fun TravelExceptionPanel(
 private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(DoomTokens.spaceSm)) {
         Text(
-            title,
+            title.uppercase(Locale.forLanguageTag("tr")),
             Modifier.padding(horizontal = DoomTokens.spaceXs),
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.labelMedium,
+            letterSpacing = 1.4.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
         )
         Surface(
             Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            shape = RoundedCornerShape(DoomTokens.radiusMd),
-            tonalElevation = 1.dp,
+            shape = RoundedCornerShape(DoomTokens.radiusLg),
+            shadowElevation = 1.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .35f)),
         ) {
             Column(
                 Modifier.padding(horizontal = DoomTokens.spaceLg, vertical = DoomTokens.spaceXs),
@@ -1635,11 +1911,13 @@ private fun DisclosureRow(title: String, supporting: String, expanded: Boolean, 
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Text(supporting, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
-            Text(if (expanded) "−" else "+", Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.titleLarge)
+            val rotation by animateFloatAsState(if (expanded) 180f else 0f,
+                spring(dampingRatio = .6f, stiffness = Spring.StiffnessMediumLow), label = "disclosure")
+            Icon(Icons.Rounded.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 12.dp).graphicsLayer { rotationZ = rotation })
         }
     }
 }
@@ -1651,7 +1929,7 @@ private fun SettingsActionRow(title: String, description: String, onClick: () ->
         description = description,
         modifier = Modifier.clickable(role = Role.Button, onClick = onClick),
         trailing = {
-            Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleLarge)
+            Icon(Icons.Rounded.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         },
     )
 }
@@ -1727,12 +2005,12 @@ private fun SectionSurface(content: @Composable ColumnScope.() -> Unit) {
     Surface(
         Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        shape = RoundedCornerShape(DoomTokens.radiusLg),
-        tonalElevation = 1.dp,
+        shape = RoundedCornerShape(DoomTokens.radiusXl),
+        shadowElevation = 2.dp,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)),
     ) {
         Column(
-            Modifier.padding(DoomTokens.spaceLg),
+            Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(DoomTokens.spaceMd),
             content = content,
         )
@@ -1839,19 +2117,28 @@ private fun TodaySummaryCard(
     val views = snapshot.apps.map { UsageEngine.view(snapshot, it, now) }
     val totalLimit = totalDailyBudget(snapshot)
     val totalRemaining = remainingDailyBudget(snapshot, now)
-    val unavailable = views.count { it.availability !in setOf(AppAvailability.AVAILABLE, AppAvailability.ACTIVE) }
+    val unavailable = views.count { it.availability !in setOf(AppAvailability.AVAILABLE, AppAvailability.ACTIVE,
+        AppAvailability.INTENTION_REQUIRED, AppAvailability.PLANNED_ACCESS) }
+    val activeApp = snapshot.apps.firstOrNull { it.foregroundSince != null }
+    val usingNow = activeApp?.let { app ->
+        val reason = app.plannedReason?.takeIf { it.isNotBlank() }
+        if (reason != null) "${app.label} açık · Amacın: “$reason”" else "${app.label} şu anda açık"
+    }
     TimeBalanceCard(
-        remaining = formatUsage(totalRemaining),
+        remainingMillis = totalRemaining,
         used = formatUsage(views.sumOf { it.usedTodayMillis }),
         appCount = snapshot.apps.size,
         unavailable = unavailable,
         progress = if (totalLimit > 0) totalRemaining.toFloat() / totalLimit else 0f,
+        greeting = greetingFor(java.time.LocalTime.now(ZoneId.of(snapshot.quotaZoneId)).hour),
+        usingNow = usingNow,
     )
 }
 
 @Composable
 private fun FocusModeCard(
     activeRemainingMillis: Long,
+    activeTotalMillis: Long,
     activeLabels: List<String>,
     enabled: Boolean,
     onStartAll: (Int) -> Unit,
@@ -1859,35 +2146,54 @@ private fun FocusModeCard(
 ) {
     val active = activeRemainingMillis > 0
     var duration by rememberSaveable { mutableIntStateOf(30) }
-    var choosingDuration by remember { mutableStateOf(false) }
+    val accent = MaterialTheme.colorScheme.primary
     val background by animateColorAsState(
         if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,
-        tween(400), label = "focus-state")
+        tween(500), label = "focus-state")
     Surface(
-        Modifier.fillMaxWidth().animateContentSize(),
+        Modifier.fillMaxWidth().animateContentSize(spring(dampingRatio = .85f, stiffness = Spring.StiffnessMediumLow)),
         color = background,
-        shape = RoundedCornerShape(DoomTokens.radiusLg),
+        shape = RoundedCornerShape(DoomTokens.radiusXl),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .35f)),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(if (active) "Odak sürüyor" else "Çalışmaya başla", style = MaterialTheme.typography.titleMedium)
-                    Text(if (active) "${formatCountdown(activeRemainingMillis)} kaldı · Süre kısaltılamaz."
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp))
+                    .background(Brush.linearGradient(listOf(accent, lerp(accent, Color(0xFF00B4D8), .4f)))),
+                    contentAlignment = Alignment.Center) {
+                    Icon(if (active) Icons.Rounded.Lock else Icons.Rounded.PlayArrow, null,
+                        tint = MaterialTheme.colorScheme.onPrimary)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(if (active) "Odak sürüyor" else "Odak modu", style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold)
+                    Text(if (active) "Süre kısaltılamaz · yalnız uzatılabilir"
                         else "Seçtiğin süre boyunca korunan uygulamalar kapalı kalsın.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (active) {
-                Text("Korunanlar: ${activeLabels.joinToString(", ")}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Box(Modifier.size(96.dp), contentAlignment = Alignment.Center) {
+                        GlowRing(
+                            if (activeTotalMillis > 0) activeRemainingMillis.toFloat() / activeTotalMillis else 1f,
+                            accent, accent.copy(alpha = .12f), Modifier.fillMaxSize(), 8.dp,
+                        )
+                        Icon(Icons.Rounded.Lock, null, tint = accent, modifier = Modifier.size(26.dp))
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        RollingText(formatCountdown(activeRemainingMillis),
+                            MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold),
+                            MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("kaldı · ${activeLabels.joinToString(", ")}", maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             } else {
-                Box(Modifier.align(Alignment.End)) {
-                    TextButton(onClick = { choosingDuration = true }, enabled = enabled) { Text("Süre: $duration dk · Değiştir") }
-                    DropdownMenu(expanded = choosingDuration, onDismissRequest = { choosingDuration = false }) {
-                        listOf(15, 30, 60).forEach { minutes ->
-                            DropdownMenuItem(text = { Text("$minutes dakika") }, onClick = { duration = minutes; choosingDuration = false })
-                        }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(15, 30, 45, 60, 90).forEach { minutes ->
+                        DurationPill("$minutes", duration == minutes, enabled, Modifier.weight(1f)) { duration = minutes }
                     }
                 }
                 PrimaryFocusButton("Odağı başlat · $duration dk", enabled,
@@ -1897,8 +2203,29 @@ private fun FocusModeCard(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)) {
                 SelectionGlyph(MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(8.dp))
-                Text(if (active) "Süreyi uzat veya uygulama ekle" else "Uygulama seç", style = MaterialTheme.typography.labelMedium)
+                Text(if (active) "Süreyi uzat veya uygulama ekle" else "Sadece bazı uygulamaları seç", style = MaterialTheme.typography.labelLarge)
             }
+        }
+    }
+}
+
+/** Segmented duration choice; the selected pill fills with the accent and bounces slightly. */
+@Composable
+private fun DurationPill(label: String, selected: Boolean, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val container by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer, tween(220), label = "pill-bg")
+    val content by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface, tween(220), label = "pill-fg")
+    val scale by animateFloatAsState(if (selected) 1.06f else 1f,
+        spring(dampingRatio = .4f, stiffness = Spring.StiffnessMedium), label = "pill-scale")
+    Surface(
+        onClick = onClick, enabled = enabled,
+        modifier = modifier.height(48.dp).graphicsLayer { scaleX = scale; scaleY = scale },
+        shape = RoundedCornerShape(14.dp), color = container,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(label, color = content, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("dk", color = content.copy(alpha = .75f), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -1984,13 +2311,8 @@ private fun FocusSessionSheet(
             Text(if (activePackages.isEmpty()) "Süre" else "Yeni kalan süre · Mevcut daha uzun süre korunur.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(DoomTokens.spaceSm)) {
-                listOf(15, 30, 60).forEach { minutes ->
-                    FilterChip(
-                        selected = duration == minutes,
-                        onClick = { duration = minutes },
-                        modifier = Modifier.weight(1f),
-                        label = { Text("$minutes dk") },
-                    )
+                listOf(15, 30, 45, 60, 90).forEach { minutes ->
+                    DurationPill("$minutes", duration == minutes, true, Modifier.weight(1f)) { duration = minutes }
                 }
             }
             PrimaryFocusButton(if (activePackages.isEmpty()) "Odağı başlat" else "Odağı güncelle",
@@ -2177,33 +2499,45 @@ private fun EmptyCard(enabled: Boolean, onAdd: () -> Unit) {
     }
 }
 
+/** Dashed "add" tile that sits at the end of the list. */
 @Composable
 private fun AddAppButton(enabled: Boolean, onAdd: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-        OutlinedButton(
-            onClick = onAdd,
-            enabled = enabled,
-            modifier = Modifier.heightIn(min = 48.dp),
-            shape = RoundedCornerShape(DoomTokens.radiusMd),
-            contentPadding = PaddingValues(horizontal = DoomTokens.spaceLg),
-        ) {
-            Text("＋", modifier = Modifier.padding(end = DoomTokens.spaceSm))
-            Text("Uygulama ekle")
+    val interactions = remember { MutableInteractionSource() }
+    val scale = rememberPressScale(interactions)
+    val accent = MaterialTheme.colorScheme.primary
+    Surface(
+        onClick = onAdd, enabled = enabled, interactionSource = interactions,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).graphicsLayer { scaleX = scale; scaleY = scale },
+        shape = RoundedCornerShape(DoomTokens.radiusLg),
+        color = accent.copy(alpha = .05f),
+        border = BorderStroke(1.5.dp, accent.copy(alpha = if (enabled) .35f else .15f)),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Box(Modifier.size(30.dp).clip(CircleShape).background(accent.copy(alpha = if (enabled) 1f else .4f)),
+                contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(if (enabled) "Uygulama ekle" else "Önce kurulumu tamamla", style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold, color = accent.copy(alpha = if (enabled) 1f else .5f))
         }
     }
 }
 
 @Composable
 private fun TargetSortMenu(selected: TargetSort, onSelect: (TargetSort) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton(onClick = { expanded = true }) { Text("Sırala · ${selected.label}") }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            TargetSort.entries.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(if (option == selected) "✓  ${option.label}" else option.label) },
-                    onClick = { expanded = false; onSelect(option) },
-                )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TargetSort.entries.forEach { option ->
+            val isSelected = option == selected
+            val container by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer,
+                tween(220), label = "sort-bg")
+            val content by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant,
+                tween(220), label = "sort-fg")
+            Surface(onClick = { onSelect(option) }, shape = CircleShape, color = container) {
+                Text(option.label, Modifier.padding(horizontal = 14.dp, vertical = 8.dp), color = content,
+                    style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -2212,6 +2546,7 @@ private fun TargetSortMenu(selected: TargetSort, onSelect: (TargetSort) -> Unit)
 @Composable
 private fun TargetCard(
     modifier: Modifier = Modifier,
+    sharedLine: String? = null,
     target: ProtectedApp,
     installed: InstalledApp?,
     view: AppView,
@@ -2246,23 +2581,36 @@ private fun TargetCard(
         AppAvailability.SCHEDULE_BLOCKED,
         AppAvailability.COOLDOWN,
     )
+    val blocked = view.availability in setOf(
+        AppAvailability.DAILY_BLOCKED, AppAvailability.GROUP_BLOCKED, AppAvailability.MANUAL_BLOCKED,
+        AppAvailability.SCHEDULE_BLOCKED, AppAvailability.FOCUS_BLOCKED, AppAvailability.COOLDOWN,
+        AppAvailability.EMERGENCY_WAIT,
+    )
+    val interactions = remember { MutableInteractionSource() }
+    val pressScale = rememberPressScale(interactions, .985f)
+    val borderColor by animateColorAsState(
+        if (blocked) progressColor.copy(alpha = .45f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = .42f),
+        tween(400), label = "card-border")
     Surface(
         onClick = { expanded = !expanded },
-        modifier = modifier.fillMaxWidth().animateContentSize().semantics {
+        interactionSource = interactions,
+        modifier = modifier.fillMaxWidth().graphicsLayer { scaleX = pressScale; scaleY = pressScale }
+            .animateContentSize(spring(dampingRatio = .85f, stiffness = Spring.StiffnessMediumLow)).semantics {
             stateDescription = if (expanded) "Ayrıntılar açık" else "Ayrıntılar kapalı; dokunarak aç"
         },
-        shape = RoundedCornerShape(DoomTokens.radiusLg),
+        shape = RoundedCornerShape(DoomTokens.radiusXl),
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        tonalElevation = 1.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f)),
+        shadowElevation = 2.dp,
+        border = BorderStroke(1.dp, borderColor),
     ) {
-        Column(Modifier.padding(DoomTokens.spaceLg), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(DoomTokens.spaceLg), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AppProgressIcon(installed, remainingProgress, progressColor)
-                Column(Modifier.padding(start = DoomTokens.spaceMd).weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Column(Modifier.padding(start = DoomTokens.spaceMd).weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         target.label,
                         style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -2274,7 +2622,7 @@ private fun TargetCard(
                             onClick = { menuExpanded = true },
                             modifier = Modifier.semantics { contentDescription = "${target.label} işlemleri" },
                         ) {
-                            Text("•••", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium)
+                            Icon(Icons.Rounded.MoreVert, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                             DropdownMenuItem(
@@ -2323,22 +2671,67 @@ private fun TargetCard(
                 }
             }
 
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    if (remainingMillis == 0L) "Süre doldu" else formatUsage(remainingMillis),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                if (remainingMillis > 0L) Text(
-                    "kaldı",
-                    modifier = Modifier.padding(bottom = 1.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+            sharedLine?.let {
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp)) {
+                    Text(it, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
+                        color = MaterialTheme.colorScheme.onSecondaryContainer, style = MaterialTheme.typography.labelLarge)
+                }
             }
-            Text(if (expanded) "Ayrıntıları gizle ⌃" else "Ayrıntılar ⌄",
-                color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
-            AnimatedVisibility(expanded) {
+
+            // Previously the big number always showed the daily balance, so an app blocked by focus,
+            // a schedule or a break still read "20 dk kaldı". Now a blocked app shows *why* and *until when*.
+            AnimatedContent(blocked, label = "card-headline") { isBlocked ->
+                if (isBlocked) {
+                    Surface(color = progressColor.copy(alpha = .1f), shape = RoundedCornerShape(16.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Icon(Icons.Rounded.Lock, null, tint = progressColor, modifier = Modifier.size(22.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(blockedHeadline(view), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                                    color = progressColor)
+                                Text(if (remainingMillis > 0) "Engel kalkınca günlük hakkından ${formatUsage(remainingMillis)} kalacak."
+                                    else "Bugünkü hakkın da doldu.",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                if (remainingMillis == 0L) "Süre doldu" else formatUsage(remainingMillis),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            if (remainingMillis > 0L) Text(
+                                "kaldı · ${formatUsage(view.usedTodayMillis)} kullanıldı",
+                                modifier = Modifier.padding(bottom = 3.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        UsageBar(1f - remainingProgress, progressColor)
+                    }
+                }
+            }
+            if (view.availability == AppAvailability.PLANNED_ACCESS || view.availability == AppAvailability.ACTIVE) {
+                target.plannedReason?.takeIf { it.isNotBlank() }?.let { reason ->
+                    Text("🎯 Amacın: “$reason”", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val rotation by animateFloatAsState(if (expanded) 180f else 0f,
+                    spring(dampingRatio = .6f, stiffness = Spring.StiffnessMediumLow), label = "card-chevron")
+                Text(if (expanded) "Ayrıntıları gizle" else "Ayrıntılar",
+                    color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                Icon(Icons.Rounded.KeyboardArrowDown, null, tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = rotation })
+            }
+            AnimatedVisibility(expanded,
+                enter = expandVertically(spring(dampingRatio = .85f, stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
+                exit = shrinkVertically(tween(220)) + fadeOut(tween(150))) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 (if (view.usedTodayMillis == 0L) "Henüz kullanılmadı" else "${formatUsage(view.usedTodayMillis)} kullanıldı") +
@@ -3829,7 +4222,6 @@ private fun targetComparator(
                 leftRemaining.compareTo(rightRemaining)
             }
             TargetSort.MOST_USED -> view(right).usedTodayMillis.compareTo(view(left).usedTodayMillis)
-            TargetSort.BLOCKED -> smartRank(left).compareTo(smartRank(right))
         }
     }
     return compareBy<ProtectedApp> { priority(it) }
@@ -3851,6 +4243,27 @@ private fun statusText(view: AppView) = when (view.availability) {
     AppAvailability.INTENTION_REQUIRED -> "Bilinçli giriş açık"
     AppAvailability.PLANNED_ACCESS -> "Planlı kullanım · ${formatCountdown(view.plannedAccessRemainingMillis)} kaldı"
     AppAvailability.REMOVAL_PENDING -> "Kaldırma bekliyor"
+}
+
+private fun blockedHeadline(view: AppView) = when (view.availability) {
+    AppAvailability.COOLDOWN -> "Molada · ${formatCountdown(view.cooldownRemainingMillis)}"
+    AppAvailability.FOCUS_BLOCKED -> "Odak modunda · ${formatCountdown(view.focusRemainingMillis)}"
+    AppAvailability.SCHEDULE_BLOCKED -> "${view.scheduleLabel ?: "Program"} · ${formatCountdown(view.scheduleRemainingMillis)}"
+    AppAvailability.DAILY_BLOCKED -> "Bugünlük süre doldu"
+    AppAvailability.GROUP_BLOCKED -> "${view.groupLabel ?: "Ortak limit"} doldu"
+    AppAvailability.MANUAL_BLOCKED -> "Yarına kadar kilitli"
+    AppAvailability.EMERGENCY_WAIT -> "Acil erişim · ${formatCountdown(view.emergencyWaitRemainingMillis)}"
+    else -> statusText(view)
+}
+
+/** Rounded usage bar that fills smoothly; colour follows the app's state. */
+@Composable
+private fun UsageBar(usedFraction: Float, color: Color) {
+    val fraction by animateFloatAsState(usedFraction.coerceIn(0f, 1f), tween(900), label = "usage-bar")
+    Box(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().clip(CircleShape)
+            .background(Brush.horizontalGradient(listOf(color.copy(alpha = .65f), color))))
+    }
 }
 
 @Composable
