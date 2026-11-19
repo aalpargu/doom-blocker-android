@@ -27,6 +27,8 @@ data class ScreenNode(
     val selected: Boolean,
     val heightFraction: Float = 1f,
     val topFraction: Float = 0f,
+    /** False for views kept alive off screen (Instagram keeps the Reels page around after you leave it). */
+    val visible: Boolean = true,
 )
 
 /**
@@ -53,11 +55,20 @@ object ShortFormDetector {
         ShortFormKind.SHORTS to setOf("shorts"),
     )
 
-    fun matches(kind: ShortFormKind, nodes: Sequence<ScreenNode>): Boolean = nodes.any { node ->
+    fun matches(kind: ShortFormKind, nodes: Sequence<ScreenNode>): Boolean = signal(kind, nodes) != null
+
+    /** Which signal matched (for the diagnostics log), or null. Only elements actually on screen count. */
+    fun signal(kind: ShortFormKind, nodes: Sequence<ScreenNode>): String? = nodes.firstNotNullOfOrNull { node ->
+        if (!node.visible) return@firstNotNullOfOrNull null
         val shortId = node.id?.substringAfter(":id/")
-        (shortId != null && shortId in playerIds.getValue(kind) && node.heightFraction >= FULL_SCREEN) ||
-            (node.selected && shortId != null && shortId in tabIds.getValue(kind)) ||
-            (node.selected && node.topFraction >= .75f && node.label?.trim()?.lowercase() in tabLabels.getValue(kind))
+        when {
+            shortId != null && shortId in playerIds.getValue(kind) && node.heightFraction >= FULL_SCREEN &&
+                node.topFraction < .3f -> "oynatıcı $shortId"
+            node.selected && shortId != null && shortId in tabIds.getValue(kind) -> "sekme $shortId"
+            node.selected && node.topFraction >= .75f && node.label?.trim()?.lowercase() in tabLabels.getValue(kind) ->
+                "sekme etiketi ${node.label}"
+            else -> null
+        }
     }
 
     private val homeIds = mapOf(
@@ -68,7 +79,7 @@ object ShortFormDetector {
 
     /** The app's own "Home" tab in the bottom bar, used to leave Reels/Shorts without leaving the app. */
     fun isHomeTab(kind: ShortFormKind, node: ScreenNode): Boolean {
-        if (node.topFraction < .75f) return false
+        if (!node.visible || node.topFraction < .75f) return false
         val shortId = node.id?.substringAfter(":id/")
         return (shortId != null && shortId in homeIds.getValue(kind)) ||
             node.label?.trim()?.lowercase() in homeLabels
@@ -83,15 +94,14 @@ object ShortFormDetector {
 class ShortFormGuard(
     private val service: AccessibilityService,
     private val preferences: ShortFormPreferences,
-    /** (kind, handled): handled=false means detection kept repeating and the guard paused itself. */
-    private val onBlocked: (ShortFormKind, Boolean) -> Unit,
+    /** (kind, signal that matched). */
+    private val onBlocked: (ShortFormKind, String) -> Unit,
     private val onCaptured: (String) -> Unit,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private var lastCheckElapsed = 0L
     private var lastBackElapsed = 0L
-    private var consecutiveBacks = 0
-    private var pausedUntilElapsed = 0L
+    private var actionPending = false
     private var pendingPackage: String? = null
     private var retries = 0
     private val pendingCheck = Runnable { pendingPackage?.let { check(it) } }
@@ -143,28 +153,26 @@ class ShortFormGuard(
         // While a capture is armed the user needs to reach Reels/Shorts, so blocking pauses until it is taken.
         if (!enabled || preferences.state.value.captureAtWallMillis != null) return
         val nodes = collectWithRefs(root)
-        if (!ShortFormDetector.matches(kind, nodes.asSequence().map { it.first })) {
-            consecutiveBacks = 0
+        val signal = ShortFormDetector.signal(kind, nodes.asSequence().map { it.first })
+        if (signal == null) {
+            // Detection cleared: the previous action worked, the next Reels visit is a fresh one.
+            actionPending = false
             return
         }
         val now = SystemClock.elapsedRealtime()
-        if (now < pausedUntilElapsed || now - lastBackElapsed < BACK_SPACING) return
-        consecutiveBacks = if (now - lastBackElapsed < 5_000) consecutiveBacks + 1 else 1
+        // After acting, give the app time to switch screens before judging again. Without this the
+        // still-fading Reels page was "seen" again and Home was tapped twice, which refreshes the feed.
+        if (actionPending && now - lastBackElapsed < SETTLE_MILLIS) return
         lastBackElapsed = now
-        if (consecutiveBacks > 3) {
-            // Something keeps reporting Reels/Shorts. Never throw the user out of the app; stop
-            // acting for a while and say so, rather than looping.
-            pausedUntilElapsed = now + 15_000
-            consecutiveBacks = 0
-            onBlocked(kind, false)
-            return
-        }
-        // Prefer the app's own Home tab: the user stays inside Instagram/YouTube.
-        val home = nodes.firstOrNull { ShortFormDetector.isHomeTab(kind, it.first) }?.second?.let(::clickableSelfOrParent)
-        val handled = home?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        actionPending = true
+        val home = nodes.firstOrNull { ShortFormDetector.isHomeTab(kind, it.first) }
+        // Tapping an already selected Home tab only refreshes the feed, so use Back in that case
+        // (e.g. a Reel opened full screen from the feed).
+        val homeTarget = home?.takeUnless { it.first.selected }?.second?.let(::clickableSelfOrParent)
+        val handled = homeTarget?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
         if (!handled) service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         preferences.recordBlock()
-        onBlocked(kind, true)
+        onBlocked(kind, signal)
     }
 
     private fun clickableSelfOrParent(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
@@ -193,6 +201,7 @@ class ShortFormGuard(
                 node.isSelected,
                 heightFraction = rect.height() / height,
                 topFraction = (rect.top - screen.top) / height,
+                visible = node.isVisibleToUser && rect.intersects(screen.left, screen.top, screen.right, screen.bottom),
             ) to node
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
@@ -248,7 +257,7 @@ class ShortFormGuard(
 
     private companion object {
         const val CHECK_INTERVAL = 300L
-        const val BACK_SPACING = 700L
+        const val SETTLE_MILLIS = 1_500L
         const val MAX_NODES = 1_500
         const val CAPTURE_EXPIRY = 120_000L
         const val MAX_RETRIES = 4

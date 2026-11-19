@@ -1,8 +1,6 @@
 package dev.personal.doomblocker.service
 
 import android.accessibilityservice.AccessibilityService
-import android.animation.ValueAnimator
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -13,17 +11,16 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.view.animation.AccelerateInterpolator
-import android.view.animation.OvershootInterpolator
-import android.widget.FrameLayout
+import android.view.animation.DecelerateInterpolator
+import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
+import dev.personal.doomblocker.R
 
 /**
- * A small card that drops in from the top of the screen, shows what was blocked and slides
- * away by itself. It never takes touches or focus, so the app underneath stays usable.
- * Drawn as an accessibility overlay, which needs no extra permission.
+ * A small, quiet pill at the top of the screen ("🔒 Reels kapalı"), styled like a system
+ * notice rather than a promotional card. It fades in, stays briefly and fades out. It never
+ * takes touches or focus, and needs no extra permission (accessibility overlay).
  */
 internal class BlockBanner(private val service: AccessibilityService) {
     private val handler = Handler(Looper.getMainLooper())
@@ -31,104 +28,50 @@ internal class BlockBanner(private val service: AccessibilityService) {
     private var current: View? = null
     private val hide = Runnable { dismiss(animated = true) }
 
-    fun show(emoji: String, title: String, subtitle: String, accent: Int = ACCENT) {
+    fun show(message: String, showLock: Boolean = true) {
         dismiss(animated = false)
-        val dark = service.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-            Configuration.UI_MODE_NIGHT_YES
-        fun dp(value: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, service.resources.displayMetrics)
+        fun dp(value: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, service.resources.displayMetrics).toInt()
 
-        val badge = TextView(service).apply {
-            text = emoji
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                colors = intArrayOf(accent, blend(accent, Color.parseColor("#00B4D8"), .45f))
-                gradientType = GradientDrawable.LINEAR_GRADIENT
-                orientation = GradientDrawable.Orientation.TL_BR
-            }
-            layoutParams = LinearLayout.LayoutParams(dp(46f).toInt(), dp(46f).toInt())
-        }
-        val titleView = TextView(service).apply {
-            text = title
-            setTextColor(if (dark) Color.WHITE else Color.parseColor("#14201A"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
-        val subtitleView = TextView(service).apply {
-            text = subtitle
-            setTextColor(if (dark) Color.parseColor("#BBC6BF") else Color.parseColor("#56615B"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        }
-        val texts = LinearLayout(service).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14f).toInt(), 0, 0, 0)
-            addView(titleView)
-            addView(subtitleView)
-        }
-        val row = LinearLayout(service).apply {
+        val pill = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(badge)
-            addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        }
-        // A thin bar that empties while the card is visible, so it is clear it will go away.
-        val timer = ProgressBar(service, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 1000
-            progress = 1000
-            progressTintList = android.content.res.ColorStateList.valueOf(accent)
-            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.TRANSPARENT)
-        }
-        val column = LinearLayout(service).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16f).toInt(), dp(14f).toInt(), dp(16f).toInt(), dp(8f).toInt())
-            addView(row)
-            addView(timer, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(6f).toInt()).apply {
-                topMargin = dp(10f).toInt()
-            })
+            setPadding(dp(14f), dp(9f), dp(16f), dp(9f))
             background = GradientDrawable().apply {
-                cornerRadius = dp(26f)
-                setColor(if (dark) Color.parseColor("#F21B231E") else Color.parseColor("#FAFFFFFF"))
-                setStroke(dp(1f).toInt(), blend(accent, if (dark) Color.BLACK else Color.WHITE, .55f))
+                cornerRadius = dp(100f).toFloat()
+                setColor(Color.parseColor("#EB202124"))
             }
-            elevation = dp(12f)
-        }
-        val root = FrameLayout(service).apply {
-            setPadding(dp(14f).toInt(), dp(12f).toInt(), dp(14f).toInt(), dp(24f).toInt())
-            clipToPadding = false
-            addView(column, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+            elevation = dp(6f).toFloat()
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            if (showLock) addView(ImageView(service).apply {
+                setImageResource(R.drawable.ic_lock_small)
+            }, LinearLayout.LayoutParams(dp(15f), dp(15f)).apply { marginEnd = dp(8f) })
+            addView(TextView(service).apply {
+                text = message
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                maxLines = 1
+            })
         }
 
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP
-            y = service.resources.getIdentifier("status_bar_height", "dimen", "android")
-                .takeIf { it > 0 }?.let(service.resources::getDimensionPixelSize) ?: dp(24f).toInt()
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            val statusBar = service.resources.getIdentifier("status_bar_height", "dimen", "android")
+                .takeIf { it > 0 }?.let(service.resources::getDimensionPixelSize) ?: dp(24f)
+            y = statusBar + dp(10f)
         }
-        runCatching { manager.addView(root, params) }.onFailure { return }
-        current = root
+        runCatching { manager.addView(pill, params) }.onFailure { return }
+        current = pill
 
-        // Entrance: drop from above with a little overshoot, badge pops a moment later.
-        column.translationY = -dp(140f)
-        column.alpha = 0f
-        column.scaleX = .92f; column.scaleY = .92f
-        column.animate().translationY(0f).alpha(1f).scaleX(1f).scaleY(1f)
-            .setDuration(520).setInterpolator(OvershootInterpolator(1.1f)).start()
-        badge.scaleX = 0f; badge.scaleY = 0f
-        badge.animate().scaleX(1f).scaleY(1f).setStartDelay(180).setDuration(420)
-            .setInterpolator(OvershootInterpolator(3f)).start()
-        ValueAnimator.ofInt(1000, 0).apply {
-            duration = VISIBLE_MILLIS
-            addUpdateListener { timer.progress = it.animatedValue as Int }
-            start()
-        }
+        pill.alpha = 0f
+        pill.translationY = -dp(10f).toFloat()
+        pill.animate().alpha(1f).translationY(0f).setDuration(200).setInterpolator(DecelerateInterpolator()).start()
         handler.postDelayed(hide, VISIBLE_MILLIS)
     }
 
@@ -136,23 +79,14 @@ internal class BlockBanner(private val service: AccessibilityService) {
         handler.removeCallbacks(hide)
         val view = current ?: return
         current = null
-        val card = (view as? FrameLayout)?.getChildAt(0)
-        if (animated && card != null) {
-            card.animate().translationY(-card.height.toFloat() - 80f).alpha(0f).setDuration(260)
-                .setInterpolator(AccelerateInterpolator()).withEndAction {
-                    runCatching { manager.removeViewImmediate(view) }
-                }.start()
+        if (animated) {
+            view.animate().alpha(0f).translationY(-view.height / 3f).setDuration(180).withEndAction {
+                runCatching { manager.removeViewImmediate(view) }
+            }.start()
         } else runCatching { manager.removeViewImmediate(view) }
     }
 
-    private fun blend(a: Int, b: Int, t: Float): Int = Color.rgb(
-        (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt(),
-        (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt(),
-        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt(),
-    )
-
-    companion object {
-        val ACCENT = Color.parseColor("#2A8A66")
-        const val VISIBLE_MILLIS = 2_600L
+    private companion object {
+        const val VISIBLE_MILLIS = 1_800L
     }
 }

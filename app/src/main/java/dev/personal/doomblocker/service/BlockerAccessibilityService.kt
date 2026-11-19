@@ -56,21 +56,13 @@ class BlockerAccessibilityService : AccessibilityService() {
     private val shortFormGuard by lazy {
         ShortFormGuard(
             this, app.shortForm,
-            onBlocked = { kind, handled ->
-                val section = if (kind == ShortFormKind.REELS) "Reels" else "Shorts"
-                val count = app.shortForm.state.value.blockedToday
-                if (handled) banner.show(
-                    if (kind == ShortFormKind.REELS) "🎬" else "▶️",
-                    "$section kilitli",
-                    "Ana sayfaya döndün · bugün $count. kez 💪",
-                ) else banner.show(
-                    "⚠️", "$section algılanmaya devam ediyor",
-                    "15 sn duruyorum. Sorun sürerse Planlar'dan ekran yapısı kaydı gönder.",
-                    android.graphics.Color.parseColor("#B7791F"),
-                )
-                app.appScope.launch { app.diagnostics.add("KISA VİDEO", "${kind.label} algılandı; ana sayfaya dönüldü.", kind.packageName) }
+            onBlocked = { kind, signal ->
+                banner.show(if (kind == ShortFormKind.REELS) "Reels kapalı" else "Shorts kapalı")
+                app.appScope.launch {
+                    app.diagnostics.add("KISA VİDEO", "${kind.label} algılandı ($signal); ana sayfaya dönüldü.", kind.packageName)
+                }
             },
-            onCaptured = { label -> banner.show("📸", "Ekran yapısı kaydedildi", label) },
+            onCaptured = { label -> banner.show("Ekran yapısı kaydedildi · $label", showLock = false) },
         )
     }
     private val scheduledTick = Runnable { processForeground(null) }
