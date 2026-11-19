@@ -52,14 +52,25 @@ class BlockerAccessibilityService : AccessibilityService() {
     private var probeRequestWall: Long? = null
     private val foregroundStabilizer = ForegroundStabilizer()
     private val limitNotifications by lazy { LimitNotificationManager(this) }
+    private val banner by lazy { BlockBanner(this) }
     private val shortFormGuard by lazy {
         ShortFormGuard(
             this, app.shortForm,
-            onBlocked = { kind ->
-                showNotice("${kind.label} kapalı 🙂 Diğer bölümler açık.")
-                app.appScope.launch { app.diagnostics.add("KISA VİDEO", "${kind.label} algılandı; geri dönüldü.", kind.packageName) }
+            onBlocked = { kind, handled ->
+                val section = if (kind == ShortFormKind.REELS) "Reels" else "Shorts"
+                val count = app.shortForm.state.value.blockedToday
+                if (handled) banner.show(
+                    if (kind == ShortFormKind.REELS) "🎬" else "▶️",
+                    "$section kilitli",
+                    "Ana sayfaya döndün · bugün $count. kez 💪",
+                ) else banner.show(
+                    "⚠️", "$section algılanmaya devam ediyor",
+                    "15 sn duruyorum. Sorun sürerse Planlar'dan ekran yapısı kaydı gönder.",
+                    android.graphics.Color.parseColor("#B7791F"),
+                )
+                app.appScope.launch { app.diagnostics.add("KISA VİDEO", "${kind.label} algılandı; ana sayfaya dönüldü.", kind.packageName) }
             },
-            onCaptured = { label -> showNotice("Ekran yapısı kaydedildi: $label") },
+            onCaptured = { label -> banner.show("📸", "Ekran yapısı kaydedildi", label) },
         )
     }
     private val scheduledTick = Runnable { processForeground(null) }
@@ -439,6 +450,7 @@ class BlockerAccessibilityService : AccessibilityService() {
         app.intentGateShield = null
         handler.removeCallbacksAndMessages(null)
         runCatching { shortFormGuard.stop() }
+        runCatching { banner.dismiss(animated = false) }
         notice?.cancel()
         notice = null
         if (receiverRegistered) {

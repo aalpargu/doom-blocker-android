@@ -54,8 +54,19 @@ import kotlin.math.sin
  * scale; the few looping ones only run while their composable is visible.
  */
 
-/** Cards rise and fade in one after another the first time a screen is shown. */
+/** Created once per screen appearance; entrance motion only plays shortly after it. */
+internal class EntranceToken { val createdAt: Long = android.os.SystemClock.uptimeMillis() }
+
+/**
+ * Cards rise and fade in one after another the first time a screen is shown.
+ *
+ * Lazy lists compose items again when they scroll into view; those items must appear instantly,
+ * otherwise scrolling shows empty gaps that fill in late. With an [EntranceToken] key the motion
+ * only plays for items composed within the first moments of the screen.
+ */
 internal fun Modifier.staggeredEntrance(index: Int, key: Any = Unit): Modifier = composed {
+    val late = key is EntranceToken && android.os.SystemClock.uptimeMillis() - key.createdAt > 600
+    if (late) return@composed Modifier
     val progress = remember(key) { Animatable(0f) }
     LaunchedEffect(key) {
         delay((index.coerceAtMost(8) * 45L))

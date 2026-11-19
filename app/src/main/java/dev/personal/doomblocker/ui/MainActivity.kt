@@ -557,6 +557,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
             },
             label = "section",
         ) { (section, diagnosticsOpen) ->
+        val entrance = remember { EntranceToken() }
         Box(Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listStateFor(section),
@@ -625,7 +626,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                 when (section) {
                     HomeSection.TODAY -> {
                         if (!setupComplete) item {
-                            Box(Modifier.staggeredEntrance(0, section)) {
+                            Box(Modifier.staggeredEntrance(0, entrance)) {
                                 SetupCard(
                                     permissions = permissions,
                                     serviceConnected = runtime.connected,
@@ -650,10 +651,10 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                 }
                             }
                             if (snapshot.apps.isNotEmpty()) item {
-                                Box(Modifier.staggeredEntrance(1, section)) { TodaySummaryCard(snapshot, now) }
+                                Box(Modifier.staggeredEntrance(1, entrance)) { TodaySummaryCard(snapshot, now) }
                             }
                             if (snapshot.apps.isNotEmpty()) item {
-                                Box(Modifier.staggeredEntrance(2, section)) {
+                                Box(Modifier.staggeredEntrance(2, entrance)) {
                                 FocusModeCard(
                                     activeRemainingMillis = snapshot.focusSession?.block?.remainingMillis(now) ?: 0,
                                     activeTotalMillis = snapshot.focusSession?.block?.durationMillis ?: 0,
@@ -675,7 +676,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                 }
                             }
                             item {
-                                Row(Modifier.fillMaxWidth().staggeredEntrance(3, section),
+                                Row(Modifier.fillMaxWidth().staggeredEntrance(3, entrance),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     QuickTile(
                                         title = "Kullanım geçmişi",
@@ -720,7 +721,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                         else "Ortak kota güncelleniyor…"
                                     } else null
                                     TargetCard(
-                                        modifier = Modifier.animateItem().staggeredEntrance(4 + index, section),
+                                        modifier = Modifier.animateItem().staggeredEntrance(4 + index, entrance),
                                         sharedLine = sharedLine,
                                         target = target,
                                         installed = installedByPackage[target.packageName],
@@ -763,7 +764,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                         if (!protection.ready && protection.error == null) item { LoadingCard() }
                         else if (snapshot != null) {
                             item {
-                                Box(Modifier.staggeredEntrance(0, section)) {
+                                Box(Modifier.staggeredEntrance(0, entrance)) {
                                 PlanSection(
                                     title = "Çalışma saatlerim",
                                     supporting = "Seçili uygulamaları belirli saatlerde otomatik kısıtla.",
@@ -786,7 +787,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                 }
                             }
                             item {
-                                Box(Modifier.staggeredEntrance(1, section)) {
+                                Box(Modifier.staggeredEntrance(1, entrance)) {
                                 PlanSection(
                                     title = "Sosyal medya için günlük toplam süre",
                                     supporting = "Birden fazla uygulama aynı günlük süreyi paylaşsın.",
@@ -809,7 +810,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                 }
                             }
                             item {
-                                Box(Modifier.staggeredEntrance(2, section)) {
+                                Box(Modifier.staggeredEntrance(2, entrance)) {
                                 PlanSection(
                                     title = "Reels ve Shorts",
                                     supporting = "Uygulamanın tamamını değil, yalnızca sonsuz kısa video bölümünü kapat. İstediğin an aç/kapat.",
@@ -838,7 +839,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                 }
                             }
                             item {
-                                Box(Modifier.staggeredEntrance(3, section)) {
+                                Box(Modifier.staggeredEntrance(3, entrance)) {
                                 PlanSection(
                                     title = "Serbest zaman",
                                     supporting = "Yolculuk, tatil veya özel bir gün için sınırları önceden planlayarak duraklat.",
