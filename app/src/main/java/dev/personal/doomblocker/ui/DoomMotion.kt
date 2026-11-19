@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.TextStyle
@@ -154,10 +155,13 @@ internal fun GlowRing(
         if (value > 0f) {
             drawArc(color.copy(alpha = .22f), -90f, 360f * value, false, topLeft, arcSize,
                 style = Stroke(stroke * 2.1f, cap = StrokeCap.Round))
-            drawArc(
-                Brush.sweepGradient(listOf(color.copy(alpha = .55f), color, color)),
-                -90f, 360f * value, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round),
-            )
+            // Sweep gradients start at 3 o'clock; rotate so the colour ramp begins at the top with the arc.
+            rotate(-90f) {
+                drawArc(
+                    Brush.sweepGradient(0f to color.copy(alpha = .55f), value.coerceAtLeast(.01f) to color, 1f to color),
+                    0f, 360f * value, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+            }
             val angle = Math.toRadians((-90 + 360 * value).toDouble())
             val r = arcSize.width / 2f
             val head = Offset(center.x + cos(angle).toFloat() * r, center.y + sin(angle).toFloat() * r)

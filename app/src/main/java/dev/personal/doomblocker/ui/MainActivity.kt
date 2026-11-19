@@ -190,9 +190,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         pendingShortcutAction.value = intent?.action?.takeIf { it != Intent.ACTION_MAIN }
         enableEdgeToEdge()
+        val blocker = application as BlockerApplication
+        // People who already granted everything (e.g. updating from an older version) skip the walkthrough.
+        if (!blocker.uiPreferences.state.value.onboardingSeen &&
+            DeviceAccess.permissions(this).let { it.usageAccess && it.accessibilityEnabled }) {
+            blocker.uiPreferences.setOnboardingSeen(true)
+        }
         setContent {
-            val preferences by (application as BlockerApplication).uiPreferences.state.collectAsStateWithLifecycle()
-            DoomBlockerTheme(preferences.amoledBlack, preferences.accent) { DoomBlockerScreen(uiModel, this) }
+            val preferences by blocker.uiPreferences.state.collectAsStateWithLifecycle()
+            DoomBlockerTheme(preferences.amoledBlack, preferences.accent) {
+                androidx.compose.animation.Crossfade(!preferences.onboardingSeen, label = "onboarding") { onboarding ->
+                    if (onboarding) OnboardingScreen { blocker.uiPreferences.setOnboardingSeen(true) }
+                    else DoomBlockerScreen(uiModel, this)
+                }
+            }
         }
     }
 
@@ -655,6 +666,11 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                             }
                             if (snapshot.apps.isNotEmpty()) item {
                                 Box(Modifier.staggeredEntrance(2, entrance)) {
+                                    MotivationCard(dev.personal.doomblocker.platform.MotivationStats.summary(snapshot, now))
+                                }
+                            }
+                            if (snapshot.apps.isNotEmpty()) item {
+                                Box(Modifier.staggeredEntrance(2, entrance)) {
                                 FocusModeCard(
                                     activeRemainingMillis = snapshot.focusSession?.block?.remainingMillis(now) ?: 0,
                                     activeTotalMillis = snapshot.focusSession?.block?.durationMillis ?: 0,
@@ -840,6 +856,25 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                             }
                             item {
                                 Box(Modifier.staggeredEntrance(3, entrance)) {
+                                PlanSection(
+                                    title = "Tarayıcıdan giriş",
+                                    supporting = "Korunan bir uygulamanın sitesi tarayıcıda açılırsa (tiktok.com, x.com…) aynı süre ve kurallar geçerli olur.",
+                                    icon = Icons.Rounded.Lock,
+                                ) {
+                                    BrowserBlockPanel(
+                                        enabled = shortForm.blockBrowser || snapshot.strictModeEnabled,
+                                        strictMode = snapshot.strictModeEnabled,
+                                        protectedLabels = snapshot.apps.map { it.label },
+                                        onChange = {
+                                            app.shortForm.setBlockBrowser(it)
+                                            message = if (it) "Tarayıcı açığı kapatıldı." else "Tarayıcı kontrolü kapatıldı."
+                                        },
+                                    )
+                                }
+                                }
+                            }
+                            item {
+                                Box(Modifier.staggeredEntrance(4, entrance)) {
                                 PlanSection(
                                     title = "Serbest zaman",
                                     supporting = "Yolculuk, tatil veya özel bir gün için sınırları önceden planlayarak duraklat.",
@@ -1066,6 +1101,11 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                                                 "Kurallar bu cihazda; kullanım süreleri ortak kota için hesabına eşitlenir."
                                             else "Veriler yalnızca bu cihazda tutulur.",
                                         )
+                                        SubtleDivider()
+                                        SettingsActionRow(
+                                            title = "Tanıtımı yeniden göster",
+                                            description = "İzin adımlarını ve uygulamanın nasıl çalıştığını tekrar gör.",
+                                        ) { app.uiPreferences.setOnboardingSeen(false) }
                                         SubtleDivider()
                                         SettingsActionRow(
                                             title = "Gelişmiş ve tanılama",
@@ -1860,6 +1900,31 @@ private fun ShortFormPanel(
 }
 
 @Composable
+private fun BrowserBlockPanel(enabled: Boolean, strictMode: Boolean, protectedLabels: List<String>, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .toggleable(value = enabled, enabled = !strictMode, role = Role.Switch, onValueChange = onChange)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Tarayıcı açığını kapat", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                if (strictMode) "Katı mod açıkken her zaman açık; kapatılamaz."
+                else "İstediğin an aç/kapat; değişiklik hemen uygulanır.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = null, enabled = !strictMode)
+    }
+    Text(
+        "Chrome, Samsung Internet, Firefox, Edge, Brave, Opera ve DuckDuckGo desteklenir. Yalnızca adres çubuğundaki site adı karşılaştırılır; hiçbir şey kaydedilmez." +
+            if (protectedLabels.isNotEmpty()) " Şu an kapsananlar: ${protectedLabels.joinToString(", ")} (siteleri varsa)." else "",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
 private fun ShortFormSwitchRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
@@ -2303,6 +2368,80 @@ private fun FocusModeCard(
                 SelectionGlyph(MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(8.dp))
                 Text(if (active) "Süreyi uzat veya uygulama ekle" else "Sadece bazı uygulamaları seç", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+/** Streak, reclaimed time and the weekly comparison, all from recorded history. */
+@Composable
+private fun MotivationCard(summary: dev.personal.doomblocker.platform.MotivationSummary) {
+    val accent = MaterialTheme.colorScheme.primary
+    val warm = Color(0xFFE8873A)
+    Surface(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(DoomTokens.radiusXl),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .35f)),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        RollingText(summary.streakDays.toString(),
+                            MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), warm)
+                        Text(" gün 🔥", Modifier.padding(bottom = 4.dp), style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold, color = warm)
+                    }
+                    Text(if (summary.streakDays > 0) "Hiçbir günlük limitine dayanmadın" else "Seri bugün yeniden başlıyor",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(dev.personal.doomblocker.platform.MotivationStats.hoursMinutes(summary.reclaimedThisMonthMillis),
+                        style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = accent)
+                    Text("Bu ay geri kazandın", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            // Last seven days as dots: filled = within limits, ring = a limit ran out, faint = no record.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                val names = listOf("Pt", "Sa", "Ça", "Pe", "Cu", "Ct", "Pz")
+                val todayIndex = LocalDate.now().dayOfWeek.value - 1
+                summary.lastSevenDays.forEachIndexed { i, ok ->
+                    val scale = popScale(ok == true)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(
+                            Modifier.size(26.dp).graphicsLayer { scaleX = scale; scaleY = scale }.clip(CircleShape).background(
+                                when (ok) {
+                                    true -> warm
+                                    false -> MaterialTheme.colorScheme.error.copy(alpha = .15f)
+                                    null -> MaterialTheme.colorScheme.surfaceContainer
+                                },
+                            ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (ok == true) Text("✓", color = Color.White, style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold)
+                            if (ok == false) Text("×", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold)
+                        }
+                        Text(names[(todayIndex - 6 + i + 70) % 7], style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            summary.weeklySavedMillis?.let { saved ->
+                val better = saved >= 0
+                Surface(color = (if (better) accent else MaterialTheme.colorScheme.error).copy(alpha = .1f),
+                    shape = RoundedCornerShape(12.dp)) {
+                    Text(
+                        if (better) "Geçen hafta, önceki haftadan ${dev.personal.doomblocker.platform.MotivationStats.hoursMinutes(saved)} daha az kaydırdın."
+                        else "Geçen hafta, önceki haftadan ${dev.personal.doomblocker.platform.MotivationStats.hoursMinutes(-saved)} daha fazla kaydırdın.",
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (better) accent else MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }

@@ -13,6 +13,8 @@ import java.time.LocalDate
 data class ShortFormState(
     val blockReels: Boolean = false,
     val blockShorts: Boolean = false,
+    /** Apply protected apps' rules to their websites in browsers. Forced on while strict mode is on. */
+    val blockBrowser: Boolean = false,
     /** How many times Reels/Shorts was closed today (local date). */
     val blockedToday: Int = 0,
     /** Wall time at which the next screen-structure capture is taken, or null when not armed. */
@@ -34,6 +36,11 @@ class ShortFormPreferences(private val context: Context) {
     fun setBlockShorts(enabled: Boolean) {
         preferences.edit { putBoolean(SHORTS, enabled) }
         mutable.value = mutable.value.copy(blockShorts = enabled)
+    }
+
+    fun setBlockBrowser(enabled: Boolean) {
+        preferences.edit { putBoolean(BROWSER, enabled) }
+        mutable.value = mutable.value.copy(blockBrowser = enabled)
     }
 
     fun recordBlock() {
@@ -70,6 +77,7 @@ class ShortFormPreferences(private val context: Context) {
         return ShortFormState(
             blockReels = preferences.getBoolean(REELS, false),
             blockShorts = preferences.getBoolean(SHORTS, false),
+            blockBrowser = preferences.getBoolean(BROWSER, false),
             blockedToday = if (preferences.getLong(COUNT_DAY, -1) == today) preferences.getInt(COUNT, 0) else 0,
             captureAtWallMillis = preferences.getLong(CAPTURE_AT, 0L).takeIf { it > 0 },
             lastCaptureLabel = preferences.getString(CAPTURE_LABEL, null),
@@ -80,6 +88,7 @@ class ShortFormPreferences(private val context: Context) {
         const val PREFERENCES = "short-form"
         const val REELS = "block-reels"
         const val SHORTS = "block-shorts"
+        const val BROWSER = "block-browser"
         const val COUNT = "blocked-count"
         const val COUNT_DAY = "blocked-count-day"
         const val CAPTURE_AT = "capture-at"

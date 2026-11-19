@@ -111,6 +111,43 @@ class LimitNotificationManager(private val context: Context) {
         }
     }
 
+    /**
+     * Once per week, from Monday 09:00 on: a short summary of last week vs the week before,
+     * plus the current streak. Only sent when both weeks have recorded days.
+     */
+    fun maybeSendWeeklyReport(snapshot: dev.personal.doomblocker.core.ProtectionSnapshot, now: ClockReading) {
+        if (!isEnabled(context) || !hasPermission(context) || snapshot.apps.isEmpty()) return
+        val zone = java.time.ZoneId.of(snapshot.quotaZoneId)
+        val local = java.time.Instant.ofEpochMilli(UsageEngine.trustedWall(snapshot, now)).atZone(zone)
+        if (local.hour < 9) return
+        val monday = local.toLocalDate().with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).toEpochDay()
+        if (preferences.getLong(WEEKLY_SENT, Long.MIN_VALUE) >= monday) return
+        val summary = dev.personal.doomblocker.platform.MotivationStats.summary(snapshot, now)
+        val saved = summary.weeklySavedMillis ?: return
+        val last = summary.lastWeekMillis ?: return
+        val format = dev.personal.doomblocker.platform.MotivationStats::hoursMinutes
+        val title = if (saved >= 0) "Geçen hafta ${format(saved)} daha az kaydırdın 🎉" else "Geçen hafta ${format(-saved)} daha fazla kaydırdın"
+        val body = buildString {
+            append("Toplam: ${format(last)}. ")
+            if (summary.streakDays > 0) append("Serin ${summary.streakDays} gün 🔥 ")
+            append("Bu ay geri kazandığın süre: ${format(summary.reclaimedThisMonthMillis)}.")
+        }
+        val openApp = PendingIntent.getActivity(
+            context, 3,
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        manager.notify(WEEKLY_ID, Notification.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_blocker)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setContentIntent(openApp)
+            .setAutoCancel(true)
+            .build())
+        preferences.edit { putLong(WEEKLY_SENT, monday) }
+    }
+
     private fun formatRemainingDailyTime(remainingMillis: Long): String {
         val totalSeconds = (remainingMillis + 999L) / 1_000L
         val minutes = totalSeconds / 60L
@@ -171,6 +208,8 @@ class LimitNotificationManager(private val context: Context) {
         private const val ENABLED = "enabled"
         private const val SENT_KEYS = "sent-keys"
         private const val CHANNEL_ID = "limit-warnings-v1"
+        private const val WEEKLY_SENT = "weekly-report-monday"
+        private const val WEEKLY_ID = 0x7EE4
 
         fun isEnabled(context: Context): Boolean =
             context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getBoolean(ENABLED, false)

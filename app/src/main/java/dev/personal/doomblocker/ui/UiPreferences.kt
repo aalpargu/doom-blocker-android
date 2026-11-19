@@ -10,6 +10,7 @@ enum class AccentOption(val label: String) { MINT("Mint"), BLUE("Mavi"), PURPLE(
 data class UiPreferenceState(
     val amoledBlack: Boolean = false,
     val accent: AccentOption = AccentOption.MINT,
+    val onboardingSeen: Boolean = false,
 )
 
 class UiPreferences(context: Context) {
@@ -27,7 +28,13 @@ class UiPreferences(context: Context) {
         mutable.value = mutable.value.copy(accent = accent)
     }
 
+    fun setOnboardingSeen(seen: Boolean) {
+        preferences.edit { putBoolean(ONBOARDING, seen) }
+        mutable.value = mutable.value.copy(onboardingSeen = seen)
+    }
+
     private fun read() = UiPreferenceState(
+        onboardingSeen = preferences.getBoolean(ONBOARDING, false),
         amoledBlack = preferences.getBoolean(AMOLED, false),
         accent = runCatching { AccentOption.valueOf(preferences.getString(ACCENT, null).orEmpty()) }
             .getOrDefault(AccentOption.MINT),
@@ -37,5 +44,6 @@ class UiPreferences(context: Context) {
         const val PREFERENCES = "ui-preferences"
         const val AMOLED = "amoled-black"
         const val ACCENT = "accent"
+        const val ONBOARDING = "onboarding-seen"
     }
 }

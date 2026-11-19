@@ -23,6 +23,10 @@ internal data class WidgetTargetModel(
 internal data class WidgetModel(
     val status: String,
     val targets: List<WidgetTargetModel>,
+    val remainingMillis: Long = 0,
+    val totalMillis: Long = 0,
+    val focusRemainingMillis: Long = 0,
+    val connected: Boolean = true,
 )
 
 /** Pure presentation rules shared by widgets, quick settings and their JVM tests. */
@@ -77,6 +81,10 @@ internal object QuickSurfaceModels {
                 else -> "Koruma aktif · ${snapshot?.apps?.size ?: 0} uygulama"
             },
             targets = targets,
+            remainingMillis = snapshot?.let { dev.personal.doomblocker.ui.remainingDailyBudget(it, now) } ?: 0,
+            totalMillis = snapshot?.let { dev.personal.doomblocker.ui.totalDailyBudget(it) } ?: 0,
+            focusRemainingMillis = focusRemaining,
+            connected = runtime.connected,
         )
     }
 

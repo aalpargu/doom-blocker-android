@@ -50,6 +50,8 @@ class BlockerAccessibilityService : AccessibilityService() {
     private var lastSharedBlockElapsed = Long.MIN_VALUE
     private var measurementReady = false
     private var probeRequestWall: Long? = null
+    private var lastBrowserCheckElapsed = 0L
+    private var lastBrowserTarget: String? = null
     private val foregroundStabilizer = ForegroundStabilizer()
     private val limitNotifications by lazy { LimitNotificationManager(this) }
     private val banner by lazy { BlockBanner(this) }
@@ -106,6 +108,18 @@ class BlockerAccessibilityService : AccessibilityService() {
             event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
         ) runCatching { shortFormGuard.onEvent(event) }
+        // Navigating inside a browser (typing a new address) changes no window, so re-check the
+        // address bar on content changes too, at most about once a second.
+        if ((event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) &&
+            BrowserSites.isBrowser(event.packageName?.toString()) && browserBlockingActive()
+        ) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastBrowserCheckElapsed >= 900) {
+                lastBrowserCheckElapsed = now
+                processForeground(event.packageName?.toString(), event.windowId)
+            }
+        }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) processForeground(
@@ -225,6 +239,7 @@ class BlockerAccessibilityService : AccessibilityService() {
         }
         runCatching { limitNotifications.onEngineResult(result, app.clock.now()) }
             .onFailure { reportFailure("Bildirim gösterilemedi; uygulama sınırları uygulanmaya devam ediyor.") }
+        runCatching { limitNotifications.maybeSendWeeklyReport(result.snapshot, app.clock.now()) }
     }
 
     private fun enforce(decision: BlockDecision) {
@@ -387,9 +402,11 @@ class BlockerAccessibilityService : AccessibilityService() {
             it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive
         }
         // Only the root package is read here. (ShortFormGuard separately reads element ids in Instagram/YouTube.)
-        val observedPackage = ForegroundWindowPolicy.eventPackage(eventPackage, eventWindowId, applicationWindow?.id)
+        val rawPackage = ForegroundWindowPolicy.eventPackage(eventPackage, eventWindowId, applicationWindow?.id)
             ?: applicationWindow?.root?.packageName?.toString()
             ?: eventPackage.takeIf { currentWindows.isEmpty() }
+        // A protected app's website in a browser counts as that app (same quota and rules).
+        val observedPackage = browserTarget(rawPackage, applicationWindow?.root) ?: rawPackage
         val stable = foregroundStabilizer.resolve(observedPackage, SystemClock.elapsedRealtime())
         val packageName = stable.packageName
         val pictureInPicture = currentWindows.any { it.isInPictureInPictureMode }
@@ -402,6 +419,20 @@ class BlockerAccessibilityService : AccessibilityService() {
         reportFailure("Pencere bilgisi okunamadı. Erişilebilirlik servisini yeniden açın.")
         val stable = foregroundStabilizer.resolve(null, SystemClock.elapsedRealtime())
         WindowObservation(stable.packageName, false, stable.provisional)
+    }
+
+    private fun browserBlockingActive(): Boolean =
+        app.shortForm.state.value.blockBrowser || app.repository.state.value.snapshot?.strictModeEnabled == true
+
+    private fun browserTarget(browserPackage: String?, root: android.view.accessibility.AccessibilityNodeInfo?): String? {
+        if (!BrowserSites.isBrowser(browserPackage) || !browserBlockingActive()) return null
+        val protected = app.repository.state.value.snapshot?.apps?.mapTo(mutableSetOf()) { it.packageName } ?: return null
+        val mapped = BrowserSites.protectedPackageFor(this, browserPackage!!, root ?: rootInActiveWindow, protected)
+        if (mapped != null && mapped != lastBrowserTarget) {
+            app.appScope.launch { app.diagnostics.add("TARAYICI", "Korunan uygulamanın sitesi tarayıcıda açıldı.", mapped) }
+        }
+        lastBrowserTarget = mapped
+        return mapped
     }
 
     private fun showNotice(message: String) {
