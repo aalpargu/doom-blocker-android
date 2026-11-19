@@ -36,6 +36,7 @@ class BlockerApplication : Application() {
     val serviceStatus = ServiceStatus()
     val deviceSync by lazy { dev.personal.doomblocker.sync.DeviceSync(this, appScope, repository, clock) }
     val uiPreferences by lazy { UiPreferences(this) }
+    val shortForm by lazy { dev.personal.doomblocker.data.ShortFormPreferences(this) }
 
     override fun onCreate() {
         super.onCreate()

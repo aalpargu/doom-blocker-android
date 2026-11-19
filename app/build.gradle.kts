@@ -13,8 +13,8 @@ android {
         applicationId = "dev.personal.doomblocker"
         minSdk = 34
         targetSdk = 36
-        versionCode = 25
-        versionName = "3.2.0"
+        versionCode = 26
+        versionName = "3.3.0"
         val syncConfig = Properties().apply {
             val configFile = rootProject.file("sync.properties")
             if (configFile.isFile) configFile.inputStream().use(::load)

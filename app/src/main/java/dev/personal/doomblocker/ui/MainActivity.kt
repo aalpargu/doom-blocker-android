@@ -248,6 +248,7 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
     val diagnostics by app.diagnostics.events.collectAsStateWithLifecycle()
     val routines by app.routines.profiles.collectAsStateWithLifecycle()
     val uiPreferences by app.uiPreferences.state.collectAsStateWithLifecycle()
+    val shortForm by app.shortForm.state.collectAsStateWithLifecycle()
     val pendingShortcutAction by activity.pendingShortcutAction.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -809,6 +810,35 @@ private fun DoomBlockerScreen(uiModel: DoomBlockerViewModel, activity: MainActiv
                             }
                             item {
                                 Box(Modifier.staggeredEntrance(2, section)) {
+                                PlanSection(
+                                    title = "Reels ve Shorts",
+                                    supporting = "Uygulamanın tamamını değil, yalnızca sonsuz kısa video bölümünü kapat. İstediğin an aç/kapat.",
+                                    icon = Icons.Rounded.PlayArrow,
+                                ) {
+                                    ShortFormPanel(
+                                        state = shortForm,
+                                        onReels = { app.shortForm.setBlockReels(it); message = if (it) "Instagram Reels engeli açıldı." else "Instagram Reels engeli kapatıldı." },
+                                        onShorts = { app.shortForm.setBlockShorts(it); message = if (it) "YouTube Shorts engeli açıldı." else "YouTube Shorts engeli kapatıldı." },
+                                        onCapture = {
+                                            app.shortForm.armCapture(10_000L)
+                                            message = "10 saniye içinde Instagram Reels'i veya YouTube Shorts'u aç ve bekle."
+                                        },
+                                        onCancelCapture = { app.shortForm.clearCapture() },
+                                        onExportCapture = {
+                                            val content = app.shortForm.readCapture()
+                                            if (content == null) message = "Kayıt bulunamadı."
+                                            else {
+                                                diagnosticsPayload = content
+                                                diagnosticsExporter.launch("doom-blocker-ekran-yapisi.txt")
+                                            }
+                                        },
+                                        accessibilityReady = permissions.accessibilityEnabled && runtime.connected,
+                                    )
+                                }
+                                }
+                            }
+                            item {
+                                Box(Modifier.staggeredEntrance(3, section)) {
                                 PlanSection(
                                     title = "Serbest zaman",
                                     supporting = "Yolculuk, tatil veya özel bir gün için sınırları önceden planlayarak duraklat.",
@@ -1775,6 +1805,74 @@ private fun FreeTimePanel(
     }
 }
 
+/** Reels / Shorts switches. Independent of strict mode: they apply the moment they are flipped. */
+@Composable
+private fun ShortFormPanel(
+    state: dev.personal.doomblocker.data.ShortFormState,
+    onReels: (Boolean) -> Unit,
+    onShorts: (Boolean) -> Unit,
+    onCapture: () -> Unit,
+    onCancelCapture: () -> Unit,
+    onExportCapture: () -> Unit,
+    accessibilityReady: Boolean,
+) {
+    val context = LocalContext.current
+    fun installed(pkg: String) = runCatching {
+        context.packageManager.getApplicationInfo(pkg, PackageManager.ApplicationInfoFlags.of(0)).enabled
+    }.getOrDefault(false)
+    val instagram = remember { installed(dev.personal.doomblocker.service.ShortFormKind.REELS.packageName) }
+    val youtube = remember { installed(dev.personal.doomblocker.service.ShortFormKind.SHORTS.packageName) }
+    if (!accessibilityReady) Text("Çalışması için erişilebilirlik servisinin açık olması gerekir.",
+        color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    ShortFormSwitchRow("Instagram Reels'i kapat", if (instagram) "Mesajlar, hikâyeler ve ana akış açık kalır."
+        else "Instagram bu cihazda yüklü görünmüyor.", state.blockReels, onReels)
+    ShortFormSwitchRow("YouTube Shorts'u kapat", if (youtube) "Normal videolar, arama ve abonelikler açık kalır."
+        else "YouTube bu cihazda yüklü görünmüyor.", state.blockShorts, onShorts)
+    AnimatedVisibility(state.blockedToday > 0) {
+        Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) {
+            Text("Bugün ${state.blockedToday} kez kısa videodan geri döndün 💪",
+                Modifier.fillMaxWidth().padding(12.dp), color = MaterialTheme.colorScheme.onPrimaryContainer,
+                style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        }
+    }
+    SubtleDivider()
+    Text("Çalışmıyorsa", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+    Text(
+        "Instagram ve YouTube güncellendikçe ekranlarının iç adları değişebilir. \"Ekran yapısını kaydet\"e bas, 10 saniye içinde Reels'i veya Shorts'u aç. Kaydı dışa aktarıp gönderirsen algılamayı telefonuna göre ayarlarım. Kayıt sırasında engel kısa süre durur; mesaj metinleri kayda girmez.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (state.captureAtWallMillis != null) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PulsingDot(MaterialTheme.colorScheme.tertiary, active = true)
+            Text("Kayıt bekliyor… Reels veya Shorts'u aç.", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = onCancelCapture) { Text("İptal") }
+        }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onCapture, enabled = accessibilityReady) { Text("Ekran yapısını kaydet") }
+            if (state.lastCaptureLabel != null) TextButton(onClick = onExportCapture) { Text("Kaydı dışa aktar") }
+        }
+        state.lastCaptureLabel?.let {
+            Text("Son kayıt: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ShortFormSwitchRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange).padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun FreeTimeDialog(
@@ -2407,7 +2505,7 @@ private fun SetupCard(
                 SetupRow(1, "Kullanım erişimi", "Kesinti sonrasında yalnız uygulama geçişleri ve kullanım süresi tamamlanır.", permissions.usageAccess) {
                     app.startActivity(DeviceAccess.usageSettings(app).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
-                SetupRow(2, "Erişilebilirlik servisi", "Öndeki uygulamanın paket adı okunur; ekran metni ve tuşlar okunmaz.", permissions.accessibilityEnabled) {
+                SetupRow(2, "Erişilebilirlik servisi", "Öndeki uygulamanın adı okunur; tuşlar okunmaz. Reels/Shorts engeli açıksa yalnız Instagram ve YouTube'un sekme adlarına bakılır.", permissions.accessibilityEnabled) {
                     app.startActivity(DeviceAccess.accessibilitySettings().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 }
                 SetupRow(3, "Servis bağlantısı", "Servis bağlandığında sayaç ve engelleme canlı çalışır.", serviceConnected, null)

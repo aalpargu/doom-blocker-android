@@ -52,6 +52,16 @@ class BlockerAccessibilityService : AccessibilityService() {
     private var probeRequestWall: Long? = null
     private val foregroundStabilizer = ForegroundStabilizer()
     private val limitNotifications by lazy { LimitNotificationManager(this) }
+    private val shortFormGuard by lazy {
+        ShortFormGuard(
+            this, app.shortForm,
+            onBlocked = { kind ->
+                showNotice("${kind.label} kapalı 🙂 Diğer bölümler açık.")
+                app.appScope.launch { app.diagnostics.add("KISA VİDEO", "${kind.label} algılandı; geri dönüldü.", kind.packageName) }
+            },
+            onCaptured = { label -> showNotice("Ekran yapısı kaydedildi: $label") },
+        )
+    }
     private val scheduledTick = Runnable { processForeground(null) }
     private val scheduledRecheck = Runnable { processForeground(null) }
 
@@ -88,6 +98,11 @@ class BlockerAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!connected || event == null) return
+        // Reels/Shorts guard: cheap package check first; only Instagram and YouTube are inspected.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        ) runCatching { shortFormGuard.onEvent(event) }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) processForeground(
@@ -368,7 +383,7 @@ class BlockerAccessibilityService : AccessibilityService() {
         } ?: currentWindows.firstOrNull {
             it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive
         }
-        // Only the root package is read. Nodes and screen text are never traversed.
+        // Only the root package is read here. (ShortFormGuard separately reads element ids in Instagram/YouTube.)
         val observedPackage = ForegroundWindowPolicy.eventPackage(eventPackage, eventWindowId, applicationWindow?.id)
             ?: applicationWindow?.root?.packageName?.toString()
             ?: eventPackage.takeIf { currentWindows.isEmpty() }
@@ -423,6 +438,7 @@ class BlockerAccessibilityService : AccessibilityService() {
         app.intentGateShield?.dismiss()
         app.intentGateShield = null
         handler.removeCallbacksAndMessages(null)
+        runCatching { shortFormGuard.stop() }
         notice?.cancel()
         notice = null
         if (receiverRegistered) {
